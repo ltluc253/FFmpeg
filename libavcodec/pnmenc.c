@@ -19,7 +19,6 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavutil/imgutils.h"
 #include "libavutil/pixdesc.h"
 #include "avcodec.h"
 #include "internal.h"
@@ -30,10 +29,10 @@ static int pnm_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     uint8_t *bytestream, *bytestream_start, *bytestream_end;
     int i, h, h1, c, n, linesize, ret;
     uint8_t *ptr, *ptr1, *ptr2;
-    int size = av_image_get_buffer_size(avctx->pix_fmt,
-                                        avctx->width, avctx->height, 1);
 
-    if ((ret = ff_alloc_packet2(avctx, pkt, size + 200, 0)) < 0)
+    if ((ret = ff_alloc_packet2(avctx, pkt, avpicture_get_size(avctx->pix_fmt,
+                                                       avctx->width,
+                                                       avctx->height) + 200)) < 0)
         return ret;
 
     bytestream_start =
@@ -84,7 +83,7 @@ static int pnm_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
              "P%c\n%d %d\n", c, avctx->width, h1);
     bytestream += strlen(bytestream);
     if (avctx->pix_fmt != AV_PIX_FMT_MONOWHITE) {
-        int maxdepth = (1 << av_pix_fmt_desc_get(avctx->pix_fmt)->comp[0].depth) - 1;
+        int maxdepth = (1 << (av_pix_fmt_desc_get(avctx->pix_fmt)->comp[0].depth_minus1 + 1)) - 1;
         snprintf(bytestream, bytestream_end - bytestream,
                  "%d\n", maxdepth);
         bytestream += strlen(bytestream);
@@ -121,13 +120,19 @@ static int pnm_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
 
 static av_cold int pnm_encode_init(AVCodecContext *avctx)
 {
-#if FF_API_CODED_FRAME
-FF_DISABLE_DEPRECATION_WARNINGS
+    avctx->coded_frame = av_frame_alloc();
+    if (!avctx->coded_frame)
+        return AVERROR(ENOMEM);
+
     avctx->coded_frame->pict_type = AV_PICTURE_TYPE_I;
     avctx->coded_frame->key_frame = 1;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
 
+    return 0;
+}
+
+static av_cold int pnm_encode_close(AVCodecContext *avctx)
+{
+    av_frame_free(&avctx->coded_frame);
     return 0;
 }
 
@@ -138,6 +143,7 @@ AVCodec ff_pgm_encoder = {
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_PGM,
     .init           = pnm_encode_init,
+    .close          = pnm_encode_close,
     .encode2        = pnm_encode_frame,
     .pix_fmts       = (const enum AVPixelFormat[]){
         AV_PIX_FMT_GRAY8, AV_PIX_FMT_GRAY16BE, AV_PIX_FMT_NONE
@@ -152,6 +158,7 @@ AVCodec ff_pgmyuv_encoder = {
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_PGMYUV,
     .init           = pnm_encode_init,
+    .close          = pnm_encode_close,
     .encode2        = pnm_encode_frame,
     .pix_fmts       = (const enum AVPixelFormat[]){
         AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV420P16BE, AV_PIX_FMT_NONE
@@ -166,6 +173,7 @@ AVCodec ff_ppm_encoder = {
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_PPM,
     .init           = pnm_encode_init,
+    .close          = pnm_encode_close,
     .encode2        = pnm_encode_frame,
     .pix_fmts       = (const enum AVPixelFormat[]){
         AV_PIX_FMT_RGB24, AV_PIX_FMT_RGB48BE, AV_PIX_FMT_NONE
@@ -180,6 +188,7 @@ AVCodec ff_pbm_encoder = {
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_PBM,
     .init           = pnm_encode_init,
+    .close          = pnm_encode_close,
     .encode2        = pnm_encode_frame,
     .pix_fmts       = (const enum AVPixelFormat[]){ AV_PIX_FMT_MONOWHITE,
                                                   AV_PIX_FMT_NONE },

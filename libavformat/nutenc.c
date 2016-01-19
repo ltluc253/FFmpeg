@@ -280,7 +280,7 @@ static void put_tt(NUTContext *nut, AVRational *time_base, AVIOContext *bc, uint
  */
 static void put_str(AVIOContext *bc, const char *string)
 {
-    size_t len = strlen(string);
+    int len = strlen(string);
 
     ff_put_v(bc, len);
     avio_write(bc, string, len);
@@ -524,10 +524,7 @@ static int write_streaminfo(NUTContext *nut, AVIOContext *bc, int stream_id) {
     }
     if (st->codec->codec_type == AVMEDIA_TYPE_VIDEO) {
         uint8_t buf[256];
-        if (st->r_frame_rate.num>0 && st->r_frame_rate.den>0)
-            snprintf(buf, sizeof(buf), "%d/%d", st->r_frame_rate.num, st->r_frame_rate.den);
-        else
-            snprintf(buf, sizeof(buf), "%d/%d", st->codec->time_base.den, st->codec->time_base.num);
+        snprintf(buf, sizeof(buf), "%d/%d", st->codec->time_base.den, st->codec->time_base.num);
         count += add_info(dyn_bc, "r_frame_rate", buf);
     }
     dyn_size = avio_close_dyn_buf(dyn_bc, &dyn_buf);
@@ -587,7 +584,7 @@ static int write_index(NUTContext *nut, AVIOContext *bc) {
     ff_put_v(bc, nut->sp_count);
 
     for (i=0; i<nut->sp_count; i++) {
-        av_tree_find(nut->syncpoints, &dummy, ff_nut_sp_pos_cmp, (void**)next_node);
+        av_tree_find(nut->syncpoints, &dummy, (void *) ff_nut_sp_pos_cmp, (void**)next_node);
         ff_put_v(bc, (next_node[1]->pos >> 4) - (dummy.pos>>4));
         dummy.pos = next_node[1]->pos;
     }
@@ -666,8 +663,11 @@ static int write_headers(AVFormatContext *avctx, AVIOContext *bc)
             return ret;
         if (ret > 0)
             put_packet(nut, bc, dyn_bc, 1, INFO_STARTCODE);
-        else
-            ffio_free_dyn_buf(&dyn_bc);
+        else {
+            uint8_t *buf;
+            avio_close_dyn_buf(dyn_bc, &buf);
+            av_free(buf);
+        }
     }
 
     for (i = 0; i < nut->avf->nb_chapters; i++) {
@@ -676,7 +676,9 @@ static int write_headers(AVFormatContext *avctx, AVIOContext *bc)
             return ret;
         ret = write_chapter(nut, dyn_bc, i);
         if (ret < 0) {
-            ffio_free_dyn_buf(&dyn_bc);
+            uint8_t *buf;
+            avio_close_dyn_buf(dyn_bc, &buf);
+            av_freep(&buf);
             return ret;
         }
         put_packet(nut, bc, dyn_bc, 1, INFO_STARTCODE);
@@ -933,7 +935,6 @@ static int write_sm_data(AVFormatContext *s, AVIOContext *bc, AVPacket *pkt, int
                 break;
             case AV_PKT_DATA_METADATA_UPDATE:
             case AV_PKT_DATA_STRINGS_METADATA:
-            case AV_PKT_DATA_QUALITY_STATS:
                 // belongs into meta, not side data
                 break;
             }
@@ -1204,7 +1205,7 @@ static const AVOption options[] = {
     { "default",     "",                                                0,             AV_OPT_TYPE_CONST, {.i64 = 0},             INT_MIN, INT_MAX, E, "syncpoints" },
     { "none",        "Disable syncpoints, low overhead and unseekable", 0,             AV_OPT_TYPE_CONST, {.i64 = NUT_PIPE},      INT_MIN, INT_MAX, E, "syncpoints" },
     { "timestamped", "Extend syncpoints with a wallclock timestamp",    0,             AV_OPT_TYPE_CONST, {.i64 = NUT_BROADCAST}, INT_MIN, INT_MAX, E, "syncpoints" },
-    { "write_index", "Write index",                               OFFSET(write_index), AV_OPT_TYPE_BOOL,  {.i64 = 1},                   0,       1, E, },
+    { "write_index", "Write index",                               OFFSET(write_index), AV_OPT_TYPE_INT,   {.i64 = 1},                   0,       1, E, },
     { NULL },
 };
 

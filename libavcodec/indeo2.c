@@ -165,8 +165,7 @@ static int ir2_decode_frame(AVCodecContext *avctx,
         buf[i] = ff_reverse[buf[i]];
 #endif
 
-    if ((ret = init_get_bits8(&s->gb, buf + start, buf_size - start)) < 0)
-        return ret;
+    init_get_bits(&s->gb, buf + start, (buf_size - start) * 8);
 
     if (s->decode_delta) { /* intraframe */
         if ((ret = ir2_decode_plane(s, avctx->width, avctx->height,
@@ -253,5 +252,5 @@ AVCodec ff_indeo2_decoder = {
     .init           = ir2_decode_init,
     .close          = ir2_decode_end,
     .decode         = ir2_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    .capabilities   = CODEC_CAP_DR1,
 };

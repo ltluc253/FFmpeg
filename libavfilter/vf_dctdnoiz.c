@@ -367,10 +367,10 @@ static av_always_inline void filter_freq_##bsize(const float *src, int src_lines
         float *b = &tmp_block2[i];                                                          \
         /* frequency filtering */                                                           \
         if (expr) {                                                                         \
-            var_values[VAR_C] = fabsf(*b);                                                  \
+            var_values[VAR_C] = FFABS(*b);                                                  \
             *b *= av_expr_eval(expr, var_values, NULL);                                     \
         } else {                                                                            \
-            if (fabsf(*b) < sigma_th)                                                       \
+            if (FFABS(*b) < sigma_th)                                                       \
                 *b = 0;                                                                     \
         }                                                                                   \
     }                                                                                       \
@@ -513,9 +513,9 @@ static int config_input(AVFilterLink *inlink)
 
     s->p_linesize = linesize = FFALIGN(s->pr_width, 32);
     for (i = 0; i < 2; i++) {
-        s->cbuf[i][0] = av_malloc_array(linesize * s->pr_height, sizeof(*s->cbuf[i][0]));
-        s->cbuf[i][1] = av_malloc_array(linesize * s->pr_height, sizeof(*s->cbuf[i][1]));
-        s->cbuf[i][2] = av_malloc_array(linesize * s->pr_height, sizeof(*s->cbuf[i][2]));
+        s->cbuf[i][0] = av_malloc(linesize * s->pr_height * sizeof(*s->cbuf[i][0]));
+        s->cbuf[i][1] = av_malloc(linesize * s->pr_height * sizeof(*s->cbuf[i][1]));
+        s->cbuf[i][2] = av_malloc(linesize * s->pr_height * sizeof(*s->cbuf[i][2]));
         if (!s->cbuf[i][0] || !s->cbuf[i][1] || !s->cbuf[i][2])
             return AVERROR(ENOMEM);
     }
@@ -600,10 +600,8 @@ static int query_formats(AVFilterContext *ctx)
         AV_PIX_FMT_BGR24, AV_PIX_FMT_RGB24,
         AV_PIX_FMT_NONE
     };
-    AVFilterFormats *fmts_list = ff_make_format_list(pix_fmts);
-    if (!fmts_list)
-        return AVERROR(ENOMEM);
-    return ff_set_common_formats(ctx, fmts_list);
+    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
+    return 0;
 }
 
 typedef struct ThreadData {
@@ -734,14 +732,14 @@ static av_cold void uninit(AVFilterContext *ctx)
     int i;
     DCTdnoizContext *s = ctx->priv;
 
-    av_freep(&s->weights);
+    av_free(s->weights);
     for (i = 0; i < 2; i++) {
-        av_freep(&s->cbuf[i][0]);
-        av_freep(&s->cbuf[i][1]);
-        av_freep(&s->cbuf[i][2]);
+        av_free(s->cbuf[i][0]);
+        av_free(s->cbuf[i][1]);
+        av_free(s->cbuf[i][2]);
     }
     for (i = 0; i < s->nb_threads; i++) {
-        av_freep(&s->slices[i]);
+        av_free(s->slices[i]);
         av_expr_free(s->expr[i]);
     }
 }

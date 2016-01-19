@@ -27,7 +27,7 @@ SECTION_RODATA
 
 cextern pw_255
 
-SECTION .text
+SECTION_TEXT
 
 ; %1 = nr. of xmm registers used
 %macro ADD_BYTES_FN 1
@@ -157,7 +157,7 @@ cglobal add_png_paeth_prediction, 5, 7, %1, dst, src, top, w, bpp, end, cntr
     movh            [dstq], m3
     add               dstq, bppq
     cmp               dstq, endq
-    jl .loop
+    jle .loop
 
     mov               dstq, [rsp]
     dec              cntrq

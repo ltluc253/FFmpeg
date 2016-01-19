@@ -103,30 +103,19 @@ AVBufferRef *av_buffer_ref(AVBufferRef *buf)
     return ret;
 }
 
-static void buffer_replace(AVBufferRef **dst, AVBufferRef **src)
+void av_buffer_unref(AVBufferRef **buf)
 {
     AVBuffer *b;
 
-    b = (*dst)->buffer;
-
-    if (src) {
-        **dst = **src;
-        av_freep(src);
-    } else
-        av_freep(dst);
+    if (!buf || !*buf)
+        return;
+    b = (*buf)->buffer;
+    av_freep(buf);
 
     if (!avpriv_atomic_int_add_and_fetch(&b->refcount, -1)) {
         b->free(b->opaque, b->data);
         av_freep(&b);
     }
-}
-
-void av_buffer_unref(AVBufferRef **buf)
-{
-    if (!buf || !*buf)
-        return;
-
-    buffer_replace(buf, NULL);
 }
 
 int av_buffer_is_writable(const AVBufferRef *buf)
@@ -159,8 +148,8 @@ int av_buffer_make_writable(AVBufferRef **pbuf)
         return AVERROR(ENOMEM);
 
     memcpy(newbuf->data, buf->data, buf->size);
-
-    buffer_replace(pbuf, &newbuf);
+    av_buffer_unref(pbuf);
+    *pbuf = newbuf;
 
     return 0;
 }
@@ -201,7 +190,8 @@ int av_buffer_realloc(AVBufferRef **pbuf, int size)
 
         memcpy(new->data, buf->data, FFMIN(size, buf->size));
 
-        buffer_replace(pbuf, &new);
+        av_buffer_unref(pbuf);
+        *pbuf = new;
         return 0;
     }
 
@@ -260,7 +250,6 @@ void av_buffer_pool_uninit(AVBufferPool **ppool)
         buffer_pool_free(pool);
 }
 
-#if USE_ATOMICS
 /* remove the whole buffer list from the pool and return it */
 static BufferPoolEntry *get_pool(AVBufferPool *pool)
 {
@@ -296,7 +285,6 @@ static void add_to_pool(BufferPoolEntry *buf)
             end = end->next;
     }
 }
-#endif
 
 static void pool_release_buffer(void *opaque, uint8_t *data)
 {

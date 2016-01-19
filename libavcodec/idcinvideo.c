@@ -56,7 +56,8 @@
 #define HUF_TOKENS 256
 #define PALETTE_COUNT 256
 
-typedef struct hnode {
+typedef struct
+{
   int count;
   unsigned char used;
   int children[2];
@@ -248,5 +249,5 @@ AVCodec ff_idcin_decoder = {
     .priv_data_size = sizeof(IdcinContext),
     .init           = idcin_decode_init,
     .decode         = idcin_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    .capabilities   = CODEC_CAP_DR1,
 };

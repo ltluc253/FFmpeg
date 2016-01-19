@@ -175,7 +175,7 @@ static int flic_read_header(AVFormatContext *s)
         avio_seek(pb, 12, SEEK_SET);
 
         /* send over abbreviated FLIC header chunk */
-        av_freep(&st->codec->extradata);
+        av_free(st->codec->extradata);
         if (ff_alloc_extradata(st->codec, 12))
             return AVERROR(ENOMEM);
         memcpy(st->codec->extradata, header, 12);
@@ -227,7 +227,7 @@ static int flic_read_packet(AVFormatContext *s,
             ret = avio_read(pb, pkt->data + FLIC_PREAMBLE_SIZE,
                 size - FLIC_PREAMBLE_SIZE);
             if (ret != size - FLIC_PREAMBLE_SIZE) {
-                av_packet_unref(pkt);
+                av_free_packet(pkt);
                 ret = AVERROR(EIO);
             }
             packet_read = 1;
@@ -245,7 +245,7 @@ static int flic_read_packet(AVFormatContext *s,
             ret = avio_read(pb, pkt->data, size);
 
             if (ret != size) {
-                av_packet_unref(pkt);
+                av_free_packet(pkt);
                 ret = AVERROR(EIO);
             }
 

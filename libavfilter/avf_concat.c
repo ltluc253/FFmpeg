@@ -68,7 +68,7 @@ static const AVOption concat_options[] = {
       AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, A|F},
     { "unsafe", "enable unsafe mode",
       OFFSET(unsafe),
-      AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, V|A|F},
+      AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, V|A|F},
     { NULL }
 };
 
@@ -80,7 +80,6 @@ static int query_formats(AVFilterContext *ctx)
     unsigned type, nb_str, idx0 = 0, idx, str, seg;
     AVFilterFormats *formats, *rates = NULL;
     AVFilterChannelLayouts *layouts = NULL;
-    int ret;
 
     for (type = 0; type < TYPE_ALL; type++) {
         nb_str = cat->nb_streams[type];
@@ -89,26 +88,26 @@ static int query_formats(AVFilterContext *ctx)
 
             /* Set the output formats */
             formats = ff_all_formats(type);
-            if ((ret = ff_formats_ref(formats, &ctx->outputs[idx]->in_formats)) < 0)
-                return ret;
-
+            if (!formats)
+                return AVERROR(ENOMEM);
+            ff_formats_ref(formats, &ctx->outputs[idx]->in_formats);
             if (type == AVMEDIA_TYPE_AUDIO) {
                 rates = ff_all_samplerates();
-                if ((ret = ff_formats_ref(rates, &ctx->outputs[idx]->in_samplerates)) < 0)
-                    return ret;
+                if (!rates)
+                    return AVERROR(ENOMEM);
+                ff_formats_ref(rates, &ctx->outputs[idx]->in_samplerates);
                 layouts = ff_all_channel_layouts();
-                if ((ret = ff_channel_layouts_ref(layouts, &ctx->outputs[idx]->in_channel_layouts)) < 0)
-                    return ret;
+                if (!layouts)
+                    return AVERROR(ENOMEM);
+                ff_channel_layouts_ref(layouts, &ctx->outputs[idx]->in_channel_layouts);
             }
 
             /* Set the same formats for each corresponding input */
             for (seg = 0; seg < cat->nb_segments; seg++) {
-                if ((ret = ff_formats_ref(formats, &ctx->inputs[idx]->out_formats)) < 0)
-                    return ret;
+                ff_formats_ref(formats, &ctx->inputs[idx]->out_formats);
                 if (type == AVMEDIA_TYPE_AUDIO) {
-                    if ((ret = ff_formats_ref(rates, &ctx->inputs[idx]->out_samplerates)) < 0 ||
-                        (ret = ff_channel_layouts_ref(layouts, &ctx->inputs[idx]->out_channel_layouts)) < 0)
-                        return ret;
+                    ff_formats_ref(rates, &ctx->inputs[idx]->out_samplerates);
+                    ff_channel_layouts_ref(layouts, &ctx->inputs[idx]->out_channel_layouts);
                 }
                 idx += ctx->nb_outputs;
             }
@@ -347,9 +346,10 @@ static int request_frame(AVFilterLink *outlink)
             if (cat->in[str].eof)
                 continue;
             ret = ff_request_frame(ctx->inputs[str]);
-            if (ret != AVERROR_EOF)
+            if (ret == AVERROR_EOF)
+                close_input(ctx, str);
+            else if (ret < 0)
                 return ret;
-            close_input(ctx, str);
         }
         ret = flush_segment(ctx);
         if (ret < 0)

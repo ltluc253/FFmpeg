@@ -45,7 +45,7 @@ int ff_raw_read_partial_packet(AVFormatContext *s, AVPacket *pkt)
     pkt->stream_index = 0;
     ret = ffio_read_partial(s->pb, pkt->data, size);
     if (ret < 0) {
-        av_packet_unref(pkt);
+        av_free_packet(pkt);
         return ret;
     }
     av_shrink_packet(pkt, ret);
@@ -92,7 +92,7 @@ fail:
     return ret;
 }
 
-int ff_raw_data_read_header(AVFormatContext *s)
+static int ff_raw_data_read_header(AVFormatContext *s)
 {
     AVStream *st = avformat_new_stream(s, NULL);
     if (!st)
@@ -120,6 +120,19 @@ AVInputFormat ff_data_demuxer = {
     .read_packet    = ff_raw_read_partial_packet,
     .raw_codec_id   = AV_CODEC_ID_NONE,
     .flags          = AVFMT_NOTIMESTAMPS,
+};
+#endif
+
+#if CONFIG_LATM_DEMUXER
+
+AVInputFormat ff_latm_demuxer = {
+    .name           = "latm",
+    .long_name      = NULL_IF_CONFIG_SMALL("raw LOAS/LATM"),
+    .read_header    = ff_raw_audio_read_header,
+    .read_packet    = ff_raw_read_partial_packet,
+    .flags          = AVFMT_GENERIC_INDEX | AVFMT_NOTIMESTAMPS,
+    .extensions     = "latm",
+    .raw_codec_id   = AV_CODEC_ID_AAC_LATM,
 };
 #endif
 
@@ -191,4 +204,44 @@ static int mjpeg_probe(AVProbeData *p)
 }
 
 FF_DEF_RAWVIDEO_DEMUXER2(mjpeg, "raw MJPEG video", mjpeg_probe, "mjpg,mjpeg,mpo", AV_CODEC_ID_MJPEG, AVFMT_GENERIC_INDEX|AVFMT_NOTIMESTAMPS)
+#endif
+
+#if CONFIG_MLP_DEMUXER
+AVInputFormat ff_mlp_demuxer = {
+    .name           = "mlp",
+    .long_name      = NULL_IF_CONFIG_SMALL("raw MLP"),
+    .read_header    = ff_raw_audio_read_header,
+    .read_packet    = ff_raw_read_partial_packet,
+    .flags          = AVFMT_GENERIC_INDEX | AVFMT_NOTIMESTAMPS,
+    .extensions     = "mlp",
+    .raw_codec_id   = AV_CODEC_ID_MLP,
+};
+#endif
+
+#if CONFIG_TRUEHD_DEMUXER
+AVInputFormat ff_truehd_demuxer = {
+    .name           = "truehd",
+    .long_name      = NULL_IF_CONFIG_SMALL("raw TrueHD"),
+    .read_header    = ff_raw_audio_read_header,
+    .read_packet    = ff_raw_read_partial_packet,
+    .flags          = AVFMT_GENERIC_INDEX | AVFMT_NOTIMESTAMPS,
+    .extensions     = "thd",
+    .raw_codec_id   = AV_CODEC_ID_TRUEHD,
+};
+#endif
+
+#if CONFIG_SHORTEN_DEMUXER
+AVInputFormat ff_shorten_demuxer = {
+    .name           = "shn",
+    .long_name      = NULL_IF_CONFIG_SMALL("raw Shorten"),
+    .read_header    = ff_raw_audio_read_header,
+    .read_packet    = ff_raw_read_partial_packet,
+    .flags          = AVFMT_NOBINSEARCH | AVFMT_NOGENSEARCH | AVFMT_NO_BYTE_SEEK|AVFMT_NOTIMESTAMPS,
+    .extensions     = "shn",
+    .raw_codec_id   = AV_CODEC_ID_SHORTEN,
+};
+#endif
+
+#if CONFIG_VC1_DEMUXER
+FF_DEF_RAWVIDEO_DEMUXER2(vc1, "raw VC-1", NULL, "vc1", AV_CODEC_ID_VC1, AVFMT_GENERIC_INDEX|AVFMT_NOTIMESTAMPS)
 #endif

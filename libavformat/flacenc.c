@@ -97,7 +97,7 @@ static int flac_write_header(struct AVFormatContext *s)
         padding = 8192;
     /* The FLAC specification states that 24 bits are used to represent the
      * size of a metadata block so we must clip this value to 2^24-1. */
-    padding = av_clip_uintp2(padding, 24);
+    padding = av_clip(padding, 0, 16777215);
 
     ret = ff_flac_write_header(s->pb, codec->extradata,
                                codec->extradata_size, 0);
@@ -187,7 +187,7 @@ static int flac_write_packet(struct AVFormatContext *s, AVPacket *pkt)
 }
 
 static const AVOption flacenc_options[] = {
-    { "write_header", "Write the file header", offsetof(FlacMuxerContext, write_header), AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, AV_OPT_FLAG_ENCODING_PARAM },
+    { "write_header", "Write the file header", offsetof(FlacMuxerContext, write_header), AV_OPT_TYPE_INT, {.i64 = 1}, 0, 1, AV_OPT_FLAG_ENCODING_PARAM },
     { NULL },
 };
 

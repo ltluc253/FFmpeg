@@ -22,7 +22,6 @@
 
 #include "libavutil/channel_layout.h"
 #include "libavutil/float_dsp.h"
-#include "libavutil/internal.h"
 #include "avcodec.h"
 #include "bytestream.h"
 #include "fft.h"
@@ -187,7 +186,7 @@ static int on2avc_decode_band_scales(On2AVCContext *c, GetBitContext *gb)
 
 static inline float on2avc_scale(int v, float scale)
 {
-    return v * sqrtf(abs(v)) * scale;
+    return v * sqrtf(fabsf(v)) * scale;
 }
 
 // spectral data is coded completely differently - there are no unsigned codebooks
@@ -803,9 +802,7 @@ static int on2avc_decode_subframe(On2AVCContext *c, const uint8_t *buf,
     GetBitContext gb;
     int i, ret;
 
-    if ((ret = init_get_bits8(&gb, buf, buf_size)) < 0)
-        return ret;
-
+    init_get_bits(&gb, buf, buf_size * 8);
     if (get_bits1(&gb)) {
         av_log(c->avctx, AV_LOG_ERROR, "enh bit set\n");
         return AVERROR_INVALIDDATA;
@@ -856,8 +853,10 @@ static int on2avc_decode_frame(AVCodecContext * avctx, void *data,
     if (c->is_av500) {
         /* get output buffer */
         frame->nb_samples = ON2AVC_SUBFRAME_SIZE;
-        if ((ret = ff_get_buffer(avctx, frame, 0)) < 0)
+        if ((ret = ff_get_buffer(avctx, frame, 0)) < 0) {
+            av_log(avctx, AV_LOG_ERROR, "get_buffer() failed\n");
             return ret;
+        }
 
         if ((ret = on2avc_decode_subframe(c, buf, buf_size, frame, 0)) < 0)
             return ret;
@@ -880,8 +879,10 @@ static int on2avc_decode_frame(AVCodecContext * avctx, void *data,
 
         /* get output buffer */
         frame->nb_samples = ON2AVC_SUBFRAME_SIZE * num_frames;
-        if ((ret = ff_get_buffer(avctx, frame, 0)) < 0)
+        if ((ret = ff_get_buffer(avctx, frame, 0)) < 0) {
+            av_log(avctx, AV_LOG_ERROR, "get_buffer() failed\n");
             return ret;
+        }
 
         audio_off = 0;
         bytestream2_init(&gb, buf, buf_size);
@@ -929,18 +930,14 @@ static av_cold int on2avc_decode_init(AVCodecContext *avctx)
         av_log(avctx, AV_LOG_ERROR, "0x500 version should be mono\n");
         return AVERROR_INVALIDDATA;
     }
-
     if (avctx->channels == 2)
         av_log(avctx, AV_LOG_WARNING,
                "Stereo mode support is not good, patch is welcome\n");
 
-    // We add -0.01 before ceil() to avoid any values to fall at exactly the
-    // midpoint between different ceil values. The results are identical to
-    // using pow(10, i / 10.0) without such bias
     for (i = 0; i < 20; i++)
-        c->scale_tab[i] = ceil(ff_exp10(i * 0.1) * 16 - 0.01) / 32;
+        c->scale_tab[i] = ceil(pow(10.0, i * 0.1) * 16) / 32;
     for (; i < 128; i++)
-        c->scale_tab[i] = ceil(ff_exp10(i * 0.1) * 0.5 - 0.01);
+        c->scale_tab[i] = ceil(pow(10.0, i * 0.1) * 0.5);
 
     if (avctx->sample_rate < 32000 || avctx->channels == 1)
         memcpy(c->long_win, ff_on2avc_window_long_24000,
@@ -962,7 +959,7 @@ static av_cold int on2avc_decode_init(AVCodecContext *avctx)
     ff_fft_init(&c->fft256,  7, 0);
     ff_fft_init(&c->fft512,  8, 1);
     ff_fft_init(&c->fft1024, 9, 1);
-    c->fdsp = avpriv_float_dsp_alloc(avctx->flags & AV_CODEC_FLAG_BITEXACT);
+    c->fdsp = avpriv_float_dsp_alloc(avctx->flags & CODEC_FLAG_BITEXACT);
     if (!c->fdsp)
         return AVERROR(ENOMEM);
 
@@ -1027,7 +1024,7 @@ AVCodec ff_on2avc_decoder = {
     .init           = on2avc_decode_init,
     .decode         = on2avc_decode_frame,
     .close          = on2avc_decode_close,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    .capabilities   = CODEC_CAP_DR1,
     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLTP,
                                                       AV_SAMPLE_FMT_NONE },
 };

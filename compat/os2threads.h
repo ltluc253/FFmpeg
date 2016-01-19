@@ -32,8 +32,6 @@
 #undef __STRICT_ANSI__          /* for _beginthread() */
 #include <stdlib.h>
 
-#include <sys/fmutex.h>
-
 #include "libavutil/mem.h"
 
 typedef TID  pthread_t;
@@ -48,13 +46,6 @@ typedef struct {
 } pthread_cond_t;
 
 typedef void pthread_condattr_t;
-
-typedef struct {
-    volatile int done;
-    _fmutex mtx;
-} pthread_once_t;
-
-#define PTHREAD_ONCE_INIT {0, _FMUTEX_INITIALIZER}
 
 struct thread_arg {
     void *(*start_routine)(void *);
@@ -75,8 +66,6 @@ static av_always_inline int pthread_create(pthread_t *thread, const pthread_attr
     struct thread_arg *thread_arg;
 
     thread_arg = av_mallocz(sizeof(struct thread_arg));
-    if (!thread_arg)
-        return ENOMEM;
 
     thread_arg->start_routine = start_routine;
     thread_arg->arg = arg;
@@ -172,22 +161,4 @@ static av_always_inline int pthread_cond_wait(pthread_cond_t *cond, pthread_mute
     return 0;
 }
 
-static av_always_inline int pthread_once(pthread_once_t *once_control, void (*init_routine)(void))
-{
-    if (!once_control->done)
-    {
-        _fmutex_request(&once_control->mtx, 0);
-
-        if (!once_control->done)
-        {
-            init_routine();
-
-            once_control->done = 1;
-        }
-
-        _fmutex_release(&once_control->mtx);
-    }
-
-    return 0;
-}
 #endif /* AVCODEC_OS2PTHREADS_H */

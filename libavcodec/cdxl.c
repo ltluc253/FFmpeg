@@ -39,7 +39,7 @@
 #define BIT_LINE     0x80
 #define BYTE_LINE    0xC0
 
-typedef struct CDXLVideoContext {
+typedef struct {
     AVCodecContext *avctx;
     int            bpp;
     int            format;
@@ -80,8 +80,7 @@ static void bitplanar2chunky(CDXLVideoContext *c, int linesize, uint8_t *out)
     GetBitContext gb;
     int x, y, plane;
 
-    if (init_get_bits8(&gb, c->video, c->video_size) < 0)
-        return;
+    init_get_bits(&gb, c->video, c->video_size * 8);
     for (plane = 0; plane < c->bpp; plane++) {
         for (y = 0; y < c->avctx->height; y++) {
             for (x = 0; x < c->avctx->width; x++)
@@ -96,8 +95,7 @@ static void bitline2chunky(CDXLVideoContext *c, int linesize, uint8_t *out)
     GetBitContext  gb;
     int x, y, plane;
 
-    if (init_get_bits8(&gb, c->video, c->video_size) < 0)
-        return;
+    init_get_bits(&gb, c->video, c->video_size * 8);
     for (y = 0; y < c->avctx->height; y++) {
         for (plane = 0; plane < c->bpp; plane++) {
             for (x = 0; x < c->avctx->width; x++)
@@ -272,7 +270,7 @@ static int cdxl_decode_frame(AVCodecContext *avctx, void *data,
 
     if (encoding) {
         av_fast_padded_malloc(&c->new_video, &c->new_video_size,
-                              h * w + AV_INPUT_BUFFER_PADDING_SIZE);
+                              h * w + FF_INPUT_BUFFER_PADDING_SIZE);
         if (!c->new_video)
             return AVERROR(ENOMEM);
         if (c->bpp == 8)
@@ -305,5 +303,5 @@ AVCodec ff_cdxl_decoder = {
     .init           = cdxl_decode_init,
     .close          = cdxl_decode_end,
     .decode         = cdxl_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    .capabilities   = CODEC_CAP_DR1,
 };

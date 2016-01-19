@@ -23,6 +23,15 @@
 #include "libavutil/x86/cpu.h"
 #include "libavcodec/dcadsp.h"
 
+void ff_decode_hf_sse(float dst[DCA_SUBBANDS][8], const int vq_num[DCA_SUBBANDS],
+                      const int8_t hf_vq[1024][32], intptr_t vq_offset,
+                      int scale[DCA_SUBBANDS][2], intptr_t start, intptr_t end);
+void ff_decode_hf_sse2(float dst[DCA_SUBBANDS][8], const int vq_num[DCA_SUBBANDS],
+                       const int8_t hf_vq[1024][32], intptr_t vq_offset,
+                       int scale[DCA_SUBBANDS][2], intptr_t start, intptr_t end);
+void ff_decode_hf_sse4(float dst[DCA_SUBBANDS][8], const int vq_num[DCA_SUBBANDS],
+                       const int8_t hf_vq[1024][32], intptr_t vq_offset,
+                       int scale[DCA_SUBBANDS][2], intptr_t start, intptr_t end);
 void ff_dca_lfe_fir0_sse(float *out, const float *in, const float *coefs);
 void ff_dca_lfe_fir1_sse(float *out, const float *in, const float *coefs);
 void ff_dca_lfe_fir0_fma3(float *out, const float *in, const float *coefs);
@@ -32,8 +41,19 @@ av_cold void ff_dcadsp_init_x86(DCADSPContext *s)
     int cpu_flags = av_get_cpu_flags();
 
     if (EXTERNAL_SSE(cpu_flags)) {
+#if ARCH_X86_32
+        s->decode_hf = ff_decode_hf_sse;
+#endif
         s->lfe_fir[0]        = ff_dca_lfe_fir0_sse;
         s->lfe_fir[1]        = ff_dca_lfe_fir1_sse;
+    }
+
+    if (EXTERNAL_SSE2(cpu_flags)) {
+        s->decode_hf = ff_decode_hf_sse2;
+    }
+
+    if (EXTERNAL_SSE4(cpu_flags)) {
+        s->decode_hf = ff_decode_hf_sse4;
     }
 
     if (EXTERNAL_FMA3(cpu_flags)) {
@@ -83,10 +103,10 @@ av_cold void ff_synth_filter_init_x86(SynthFilterContext *s)
     if (EXTERNAL_SSE2(cpu_flags)) {
         s->synth_filter_float = synth_filter_sse2;
     }
-    if (EXTERNAL_AVX_FAST(cpu_flags)) {
+    if (EXTERNAL_AVX(cpu_flags)) {
         s->synth_filter_float = synth_filter_avx;
     }
-    if (EXTERNAL_FMA3(cpu_flags) && !(cpu_flags & AV_CPU_FLAG_AVXSLOW)) {
+    if (EXTERNAL_FMA3(cpu_flags)) {
         s->synth_filter_float = synth_filter_fma3;
     }
 #endif /* HAVE_YASM */

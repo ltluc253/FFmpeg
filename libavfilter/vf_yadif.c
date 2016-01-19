@@ -1,8 +1,6 @@
 /*
  * Copyright (C) 2006-2011 Michael Niedermayer <michaelni@gmx.at>
  *               2010      James Darnley <james.darnley@gmail.com>
-
- * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -188,7 +186,7 @@ static int filter_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
     YADIFContext *s = ctx->priv;
     ThreadData *td  = arg;
     int refs = s->cur->linesize[td->plane];
-    int df = (s->csp->comp[td->plane].depth + 7) / 8;
+    int df = (s->csp->comp[td->plane].depth_minus1 + 8) / 8;
     int pix_3 = 3 * df;
     int slice_start = (td->h *  jobnr   ) / nb_jobs;
     int slice_end   = (td->h * (jobnr+1)) / nb_jobs;
@@ -347,11 +345,7 @@ static int filter_frame(AVFilterLink *link, AVFrame *frame)
     if (!yadif->prev)
         return 0;
 
-    if ((yadif->deint && !yadif->cur->interlaced_frame) ||
-        ctx->is_disabled ||
-        (yadif->deint && !yadif->prev->interlaced_frame && yadif->prev->repeat_pict) ||
-        (yadif->deint && !yadif->next->interlaced_frame && yadif->next->repeat_pict)
-    ) {
+    if ((yadif->deint && !yadif->cur->interlaced_frame) || ctx->is_disabled) {
         yadif->out  = av_frame_clone(yadif->cur);
         if (!yadif->out)
             return AVERROR(ENOMEM);
@@ -379,31 +373,34 @@ static int request_frame(AVFilterLink *link)
 {
     AVFilterContext *ctx = link->src;
     YADIFContext *yadif = ctx->priv;
-    int ret;
 
     if (yadif->frame_pending) {
         return_frame(ctx, 1);
         return 0;
     }
 
-    if (yadif->eof)
-        return AVERROR_EOF;
+    do {
+        int ret;
 
-    ret  = ff_request_frame(link->src->inputs[0]);
+        if (yadif->eof)
+            return AVERROR_EOF;
 
-    if (ret == AVERROR_EOF && yadif->cur) {
-        AVFrame *next = av_frame_clone(yadif->next);
+        ret  = ff_request_frame(link->src->inputs[0]);
 
-        if (!next)
-            return AVERROR(ENOMEM);
+        if (ret == AVERROR_EOF && yadif->cur) {
+            AVFrame *next = av_frame_clone(yadif->next);
 
-        next->pts = yadif->next->pts * 2 - yadif->cur->pts;
+            if (!next)
+                return AVERROR(ENOMEM);
 
-        filter_frame(link->src->inputs[0], next);
-        yadif->eof = 1;
-    } else if (ret < 0) {
-        return ret;
-    }
+            next->pts = yadif->next->pts * 2 - yadif->cur->pts;
+
+            filter_frame(link->src->inputs[0], next);
+            yadif->eof = 1;
+        } else if (ret < 0) {
+            return ret;
+        }
+    } while (!yadif->prev);
 
     return 0;
 }
@@ -451,19 +448,13 @@ static int query_formats(AVFilterContext *ctx)
         AV_PIX_FMT_YUVA422P,
         AV_PIX_FMT_YUVA444P,
         AV_PIX_FMT_GBRP,
-        AV_PIX_FMT_GBRP9,
-        AV_PIX_FMT_GBRP10,
-        AV_PIX_FMT_GBRP12,
-        AV_PIX_FMT_GBRP14,
-        AV_PIX_FMT_GBRP16,
         AV_PIX_FMT_GBRAP,
         AV_PIX_FMT_NONE
     };
 
-    AVFilterFormats *fmts_list = ff_make_format_list(pix_fmts);
-    if (!fmts_list)
-        return AVERROR(ENOMEM);
-    return ff_set_common_formats(ctx, fmts_list);
+    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
+
+    return 0;
 }
 
 static int config_props(AVFilterLink *link)
@@ -476,9 +467,8 @@ static int config_props(AVFilterLink *link)
     link->w             = link->src->inputs[0]->w;
     link->h             = link->src->inputs[0]->h;
 
-    if(s->mode & 1)
-        link->frame_rate = av_mul_q(link->src->inputs[0]->frame_rate,
-                                    (AVRational){2, 1});
+    if(s->mode&1)
+        link->frame_rate = av_mul_q(link->src->inputs[0]->frame_rate, (AVRational){2,1});
 
     if (link->w < 3 || link->h < 3) {
         av_log(ctx, AV_LOG_ERROR, "Video of less than 3 columns or lines is not supported\n");
@@ -486,7 +476,7 @@ static int config_props(AVFilterLink *link)
     }
 
     s->csp = av_pix_fmt_desc_get(link->format);
-    if (s->csp->comp[0].depth > 8) {
+    if (s->csp->comp[0].depth_minus1 / 8 == 1) {
         s->filter_line  = filter_line_c_16bit;
         s->filter_edges = filter_edges_16bit;
     } else {

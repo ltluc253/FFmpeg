@@ -26,7 +26,6 @@
 
 #include <stdint.h>
 
-#include "libavutil/qsort.h"
 #include "avcodec.h"
 #include "get_bits.h"
 #include "huffman.h"
@@ -34,7 +33,7 @@
 /* symbol for Huffman tree node */
 #define HNODE -1
 
-typedef struct HeapElem {
+typedef struct {
     uint64_t val;
     int name;
 } HeapElem;
@@ -63,7 +62,7 @@ int ff_huff_gen_len_table(uint8_t *dst, const uint64_t *stats, int stats_size, i
     int size = 0;
     int ret = 0;
 
-    if (!h || !up || !len || !map) {
+    if (!h || !up || !len) {
         ret = AVERROR(ENOMEM);
         goto end;
     }
@@ -171,7 +170,7 @@ int ff_huff_build_tree(AVCodecContext *avctx, VLC *vlc, int nb_codes, int nb_bit
                "Tree construction is not possible\n");
         return -1;
     }
-    AV_QSORT(nodes, nb_codes, Node, cmp);
+    qsort(nodes, nb_codes, sizeof(Node), cmp);
     cur_node = nb_codes;
     nodes[nb_codes*2-1].count = 0;
     for (i = 0; i < nb_codes * 2 - 1; i += 2) {

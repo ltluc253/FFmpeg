@@ -105,8 +105,8 @@ static inline void compute_sin_and_cos(HueContext *hue)
      * the saturation.
      * This will be useful in the apply_lut function.
      */
-    hue->hue_sin = lrint(sin(hue->hue) * (1 << 16) * hue->saturation);
-    hue->hue_cos = lrint(cos(hue->hue) * (1 << 16) * hue->saturation);
+    hue->hue_sin = rint(sin(hue->hue) * (1 << 16) * hue->saturation);
+    hue->hue_cos = rint(cos(hue->hue) * (1 << 16) * hue->saturation);
 }
 
 static inline void create_luma_lut(HueContext *h)
@@ -233,10 +233,10 @@ static int query_formats(AVFilterContext *ctx)
         AV_PIX_FMT_YUVA420P,
         AV_PIX_FMT_NONE
     };
-    AVFilterFormats *fmts_list = ff_make_format_list(pix_fmts);
-    if (!fmts_list)
-        return AVERROR(ENOMEM);
-    return ff_set_common_formats(ctx, fmts_list);
+
+    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
+
+    return 0;
 }
 
 static int config_props(AVFilterLink *inlink)

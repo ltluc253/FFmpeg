@@ -250,11 +250,6 @@ static int dv_assemble_frame(DVMuxContext *c, AVStream* st,
         /* FIXME: we have to have more sensible approach than this one */
         if (c->has_video)
             av_log(st->codec, AV_LOG_ERROR, "Can't process DV frame #%d. Insufficient audio data or severe sync problem.\n", c->frames);
-        if (data_size != c->sys->frame_size) {
-            av_log(st->codec, AV_LOG_ERROR, "Unexpected frame size, %d != %d\n",
-                   data_size, c->sys->frame_size);
-            return AVERROR(ENOSYS);
-        }
 
         memcpy(*frame, data, c->sys->frame_size);
         c->has_video = 1;
@@ -342,8 +337,7 @@ static DVMuxContext* dv_init_mux(AVFormatContext* s)
                 goto bail_out;
         }
     }
-    c->sys = av_dv_codec_profile2(vst->codec->width, vst->codec->height,
-                                  vst->codec->pix_fmt, vst->codec->time_base);
+    c->sys = av_dv_codec_profile(vst->codec->width, vst->codec->height, vst->codec->pix_fmt);
     if (!c->sys)
         goto bail_out;
 

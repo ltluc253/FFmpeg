@@ -28,6 +28,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <assert.h>
 
 #include "libavutil/intreadwrite.h"
 #include "libavutil/avassert.h"
@@ -163,14 +164,10 @@ static inline void put_bits(PutBitContext *s, int n, unsigned int value)
 #ifdef BITSTREAM_WRITER_LE
     bit_buf |= value << (32 - bit_left);
     if (n >= bit_left) {
-        if (3 < s->buf_end - s->buf_ptr) {
-            AV_WL32(s->buf_ptr, bit_buf);
-            s->buf_ptr += 4;
-        } else {
-            av_log(NULL, AV_LOG_ERROR, "Internal error, put_bits buffer too small\n");
-            av_assert2(0);
-        }
-        bit_buf     = value >> bit_left;
+        av_assert2(s->buf_ptr+3<s->buf_end);
+        AV_WL32(s->buf_ptr, bit_buf);
+        s->buf_ptr += 4;
+        bit_buf     = (bit_left == 32) ? 0 : value >> bit_left;
         bit_left   += 32;
     }
     bit_left -= n;
@@ -181,13 +178,9 @@ static inline void put_bits(PutBitContext *s, int n, unsigned int value)
     } else {
         bit_buf   <<= bit_left;
         bit_buf    |= value >> (n - bit_left);
-        if (3 < s->buf_end - s->buf_ptr) {
-            AV_WB32(s->buf_ptr, bit_buf);
-            s->buf_ptr += 4;
-        } else {
-            av_log(NULL, AV_LOG_ERROR, "Internal error, put_bits buffer too small\n");
-            av_assert2(0);
-        }
+        av_assert2(s->buf_ptr+3<s->buf_end);
+        AV_WB32(s->buf_ptr, bit_buf);
+        s->buf_ptr += 4;
         bit_left   += 32 - n;
         bit_buf     = value;
     }
@@ -201,7 +194,7 @@ static inline void put_sbits(PutBitContext *pb, int n, int32_t value)
 {
     av_assert2(n >= 0 && n <= 31);
 
-    put_bits(pb, n, av_mod_uintp2(value, n));
+    put_bits(pb, n, value & ((1 << n) - 1));
 }
 
 /**
@@ -260,7 +253,6 @@ static inline void skip_put_bits(PutBitContext *s, int n)
  */
 static inline void set_put_bits_buffer_size(PutBitContext *s, int size)
 {
-    av_assert0(size <= INT_MAX/8 - 32);
     s->buf_end = s->buf + size;
     s->size_in_bits = 8*size;
 }

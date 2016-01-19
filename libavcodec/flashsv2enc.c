@@ -412,14 +412,12 @@ static inline unsigned pixel_color15(const uint8_t * src)
 
 static inline unsigned int chroma_diff(unsigned int c1, unsigned int c2)
 {
-#define ABSDIFF(a,b) (abs((int)(a)-(int)(b)))
-
     unsigned int t1 = (c1 & 0x000000ff) + ((c1 & 0x0000ff00) >> 8) + ((c1 & 0x00ff0000) >> 16);
     unsigned int t2 = (c2 & 0x000000ff) + ((c2 & 0x0000ff00) >> 8) + ((c2 & 0x00ff0000) >> 16);
 
-    return ABSDIFF(t1, t2) + ABSDIFF(c1 & 0x000000ff, c2 & 0x000000ff) +
-        ABSDIFF((c1 & 0x0000ff00) >> 8 , (c2 & 0x0000ff00) >> 8) +
-        ABSDIFF((c1 & 0x00ff0000) >> 16, (c2 & 0x00ff0000) >> 16);
+    return abs(t1 - t2) + abs((c1 & 0x000000ff) - (c2 & 0x000000ff)) +
+        abs(((c1 & 0x0000ff00) >> 8) - ((c2 & 0x0000ff00) >> 8)) +
+        abs(((c1 & 0x00ff0000) >> 16) - ((c2 & 0x00ff0000) >> 16));
 }
 
 static inline int pixel_color7_fast(Palette * palette, unsigned c15)
@@ -808,8 +806,8 @@ static int reconfigure_at_keyframe(FlashSV2Context * s, const uint8_t * image,
         s->block_width  = block_width;
         s->block_height = block_height;
         if (s->rows * s->cols > s->blocks_size / sizeof(Block)) {
-            s->frame_blocks = av_realloc_array(s->frame_blocks, s->rows, s->cols * sizeof(Block));
-            s->key_blocks = av_realloc_array(s->key_blocks, s->cols, s->rows * sizeof(Block));
+            s->frame_blocks = av_realloc(s->frame_blocks, s->rows * s->cols * sizeof(Block));
+            s->key_blocks = av_realloc(s->key_blocks, s->cols * s->rows * sizeof(Block));
             if (!s->frame_blocks || !s->key_blocks) {
                 av_log(s->avctx, AV_LOG_ERROR, "Memory allocation failed.\n");
                 return -1;
@@ -856,7 +854,7 @@ static int flashsv2_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     int res;
     int keyframe = 0;
 
-    if ((res = ff_alloc_packet2(avctx, pkt, s->frame_size + AV_INPUT_BUFFER_MIN_SIZE, 0)) < 0)
+    if ((res = ff_alloc_packet2(avctx, pkt, s->frame_size + FF_MIN_BUFFER_SIZE)) < 0)
         return res;
 
     /* First frame needs to be a keyframe */

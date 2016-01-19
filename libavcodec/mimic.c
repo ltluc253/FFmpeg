@@ -35,7 +35,7 @@
 
 #define MIMIC_HEADER_SIZE   20
 
-typedef struct MimicContext {
+typedef struct {
     AVCodecContext *avctx;
 
     int             num_vblocks[3];
@@ -48,6 +48,7 @@ typedef struct MimicContext {
     int             prev_index;
 
     ThreadFrame     frames     [16];
+    AVPicture       flipped_ptrs[16];
 
     DECLARE_ALIGNED(16, int16_t, dct_block)[64];
 
@@ -166,7 +167,6 @@ static av_cold int mimic_decode_init(AVCodecContext *avctx)
     return 0;
 }
 
-#if HAVE_THREADS
 static int mimic_decode_update_thread_context(AVCodecContext *avctx, const AVCodecContext *avctx_from)
 {
     MimicContext *dst = avctx->priv_data, *src = avctx_from->priv_data;
@@ -177,6 +177,8 @@ static int mimic_decode_update_thread_context(AVCodecContext *avctx, const AVCod
 
     dst->cur_index  = src->next_cur_index;
     dst->prev_index = src->next_prev_index;
+
+    memcpy(dst->flipped_ptrs, src->flipped_ptrs, sizeof(src->flipped_ptrs));
 
     for (i = 0; i < FF_ARRAY_ELEMS(dst->frames); i++) {
         ff_thread_release_buffer(avctx, &dst->frames[i]);
@@ -189,7 +191,6 @@ static int mimic_decode_update_thread_context(AVCodecContext *avctx, const AVCod
 
     return 0;
 }
-#endif
 
 static const int8_t vlcdec_lookup[9][64] = {
     {    0, },
@@ -281,9 +282,9 @@ static int decode(MimicContext *ctx, int quality, int num_coeffs,
         const int is_chroma = !!plane;
         const int qscale    = av_clip(10000 - quality, is_chroma ? 1000 : 2000,
                                       10000) << 2;
-        const int stride    = ctx->frames[ctx->cur_index ].f->linesize[plane];
-        const uint8_t *src  = ctx->frames[ctx->prev_index].f->data[plane];
-        uint8_t       *dst  = ctx->frames[ctx->cur_index ].f->data[plane];
+        const int stride    = ctx->flipped_ptrs[ctx->cur_index ].linesize[plane];
+        const uint8_t *src  = ctx->flipped_ptrs[ctx->prev_index].data[plane];
+        uint8_t       *dst  = ctx->flipped_ptrs[ctx->cur_index ].data[plane];
 
         for (y = 0; y < ctx->num_vblocks[plane]; y++) {
             for (x = 0; x < ctx->num_hblocks[plane]; x++) {
@@ -306,13 +307,13 @@ static int decode(MimicContext *ctx, int quality, int num_coeffs,
                     } else {
                         unsigned int backref = get_bits(&ctx->gb, 4);
                         int index            = (ctx->cur_index + backref) & 15;
-                        uint8_t *p           = ctx->frames[index].f->data[0];
+                        uint8_t *p           = ctx->flipped_ptrs[index].data[0];
 
                         if (index != ctx->cur_index && p) {
                             ff_thread_await_progress(&ctx->frames[index],
                                                      cur_row, 0);
                             p += src -
-                                 ctx->frames[ctx->prev_index].f->data[plane];
+                                 ctx->flipped_ptrs[ctx->prev_index].data[plane];
                             ctx->hdsp.put_pixels_tab[1][0](dst, p, stride, 8);
                         } else {
                             av_log(ctx->avctx, AV_LOG_ERROR,
@@ -339,18 +340,17 @@ static int decode(MimicContext *ctx, int quality, int num_coeffs,
 }
 
 /**
- * Flip the buffer upside-down and put it in the YVU order to revert the
+ * Flip the buffer upside-down and put it in the YVU order to match the
  * way Mimic encodes frames.
  */
-static void flip_swap_frame(AVFrame *f)
+static void prepare_avpic(MimicContext *ctx, AVPicture *dst, AVFrame *src)
 {
     int i;
-    uint8_t *data_1 = f->data[1];
-    f->data[0] = f->data[0] + ( f->height       - 1) * f->linesize[0];
-    f->data[1] = f->data[2] + ((f->height >> 1) - 1) * f->linesize[2];
-    f->data[2] = data_1     + ((f->height >> 1) - 1) * f->linesize[1];
+    dst->data[0] = src->data[0] + ( ctx->avctx->height       - 1) * src->linesize[0];
+    dst->data[1] = src->data[2] + ((ctx->avctx->height >> 1) - 1) * src->linesize[2];
+    dst->data[2] = src->data[1] + ((ctx->avctx->height >> 1) - 1) * src->linesize[1];
     for (i = 0; i < 3; i++)
-        f->linesize[i] *= -1;
+        dst->linesize[i] = -src->linesize[i];
 }
 
 static int mimic_decode_frame(AVCodecContext *avctx, void *data,
@@ -418,6 +418,9 @@ static int mimic_decode_frame(AVCodecContext *avctx, void *data,
     ctx->next_prev_index = ctx->cur_index;
     ctx->next_cur_index  = (ctx->cur_index - 1) & 15;
 
+    prepare_avpic(ctx, &ctx->flipped_ptrs[ctx->cur_index],
+                  ctx->frames[ctx->cur_index].f);
+
     ff_thread_finish_setup(avctx);
 
     av_fast_padded_malloc(&ctx->swap_buf, &ctx->swap_buf_size, swap_buf_size);
@@ -432,16 +435,15 @@ static int mimic_decode_frame(AVCodecContext *avctx, void *data,
     res = decode(ctx, quality, num_coeffs, !is_pframe);
     ff_thread_report_progress(&ctx->frames[ctx->cur_index], INT_MAX, 0);
     if (res < 0) {
-        if (!(avctx->active_thread_type & FF_THREAD_FRAME))
+        if (!(avctx->active_thread_type & FF_THREAD_FRAME)) {
             ff_thread_release_buffer(avctx, &ctx->frames[ctx->cur_index]);
-        return res;
+            return res;
+        }
     }
 
     if ((res = av_frame_ref(data, ctx->frames[ctx->cur_index].f)) < 0)
         return res;
     *got_frame      = 1;
-
-    flip_swap_frame(data);
 
     ctx->prev_index = ctx->next_prev_index;
     ctx->cur_index  = ctx->next_cur_index;
@@ -452,7 +454,6 @@ static int mimic_decode_frame(AVCodecContext *avctx, void *data,
     return buf_size;
 }
 
-#if HAVE_THREADS
 static av_cold int mimic_init_thread_copy(AVCodecContext *avctx)
 {
     MimicContext *ctx = avctx->priv_data;
@@ -468,7 +469,6 @@ static av_cold int mimic_init_thread_copy(AVCodecContext *avctx)
 
     return 0;
 }
-#endif
 
 AVCodec ff_mimic_decoder = {
     .name                  = "mimic",
@@ -479,7 +479,7 @@ AVCodec ff_mimic_decoder = {
     .init                  = mimic_decode_init,
     .close                 = mimic_decode_end,
     .decode                = mimic_decode_frame,
-    .capabilities          = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS,
+    .capabilities          = CODEC_CAP_DR1 | CODEC_CAP_FRAME_THREADS,
     .update_thread_context = ONLY_IF_THREADS_ENABLED(mimic_decode_update_thread_context),
     .init_thread_copy      = ONLY_IF_THREADS_ENABLED(mimic_init_thread_copy),
 };

@@ -24,11 +24,12 @@
 
 %include "libavutil/x86/x86util.asm"
 
-SECTION .text
+SECTION_RODATA
 
-cextern pw_1023
-%define pw_pixel_max pw_1023
-cextern pd_32
+pw_pixel_max: times 8 dw ((1 << 10)-1)
+pd_32:        times 4 dd 32
+
+SECTION .text
 
 ;-----------------------------------------------------------------------------
 ; void ff_h264_idct_add_10(pixel *dst, int16_t *block, int stride)

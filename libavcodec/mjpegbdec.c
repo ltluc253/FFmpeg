@@ -27,7 +27,6 @@
 #include <inttypes.h>
 
 #include "avcodec.h"
-#include "internal.h"
 #include "mjpeg.h"
 #include "mjpegdec.h"
 
@@ -166,7 +165,6 @@ AVCodec ff_mjpegb_decoder = {
     .init           = ff_mjpeg_decode_init,
     .close          = ff_mjpeg_decode_end,
     .decode         = mjpegb_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    .capabilities   = CODEC_CAP_DR1,
     .max_lowres     = 3,
-    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
 };

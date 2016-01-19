@@ -206,9 +206,7 @@ end:
 
 static int compare_ocl_device_desc(const void *a, const void *b)
 {
-    const OpenCLDeviceBenchmark* va = (const OpenCLDeviceBenchmark*)a;
-    const OpenCLDeviceBenchmark* vb = (const OpenCLDeviceBenchmark*)b;
-    return FFDIFFSIGN(va->runtime , vb->runtime);
+    return ((OpenCLDeviceBenchmark*)a)->runtime - ((OpenCLDeviceBenchmark*)b)->runtime;
 }
 
 int opt_opencl_bench(void *optctx, const char *opt, const char *arg)

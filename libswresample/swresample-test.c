@@ -108,7 +108,7 @@ static const int rates[] = {
     48000,
 };
 
-static const uint64_t layouts[]={
+uint64_t layouts[]={
     AV_CH_LAYOUT_MONO                    ,
     AV_CH_LAYOUT_STEREO                  ,
     AV_CH_LAYOUT_2_1                     ,
@@ -138,8 +138,8 @@ static void setup_array(uint8_t *out[SWR_CH_MAX], uint8_t *in, enum AVSampleForm
     }
 }
 
-static int cmp(const void *a, const void *b){
-    return *(const int *)a - *(const int *)b;
+static int cmp(const int *a, const int *b){
+    return *a - *b;
 }
 
 static void audiogen(void *data, enum AVSampleFormat sample_fmt,
@@ -153,7 +153,7 @@ static void audiogen(void *data, enum AVSampleFormat sample_fmt,
     unsigned static rnd;
 
 #define PUT_SAMPLE set(data, ch, k, channels, sample_fmt, v);
-#define uint_rand(x) ((x) = (x) * 1664525 + 1013904223)
+#define uint_rand(x) (x = x * 1664525 + 1013904223)
 #define dbl_rand(x) (uint_rand(x)*2.0 / (double)UINT_MAX - 1)
     k = 0;
 
@@ -271,7 +271,7 @@ int main(int argc, char **argv){
         r = (seed * (uint64_t)(max_tests - test)) >>32;
         FFSWAP(int, remaining_tests[r], remaining_tests[max_tests - test - 1]);
     }
-    qsort(remaining_tests + max_tests - num_tests, num_tests, sizeof(remaining_tests[0]), cmp);
+    qsort(remaining_tests + max_tests - num_tests, num_tests, sizeof(remaining_tests[0]), (void*)cmp);
     in_sample_rate=16000;
     for(test=0; test<num_tests; test++){
         char  in_layout_string[256];
@@ -374,7 +374,7 @@ int main(int argc, char **argv){
                 sum_aa+= a*a;
                 sum_bb+= b*b;
                 sum_ab+= a*b;
-                maxdiff= FFMAX(maxdiff, fabs(a-b));
+                maxdiff= FFMAX(maxdiff, FFABS(a-b));
             }
             sse= sum_aa + sum_bb - 2*sum_ab;
             if(sse < 0 && sse > -0.00001) sse=0; //fix rounding error
@@ -404,7 +404,7 @@ int main(int argc, char **argv){
                     sum_aa+= a*a;
                     sum_bb+= b*b;
                     sum_ab+= a*b;
-                    maxdiff= FFMAX(maxdiff, fabs(a-b));
+                    maxdiff= FFMAX(maxdiff, FFABS(a-b));
                 }
                 sse= sum_aa + sum_bb - 2*sum_ab;
                 if(sse < 0 && sse > -0.00001) sse=0; //fix rounding error

@@ -23,13 +23,7 @@
 #ifndef AVFORMAT_QTPALETTE_H
 #define AVFORMAT_QTPALETTE_H
 
-#include <stdint.h>
-#include "avformat.h"
-
-static const uint8_t ff_qt_default_palette_2[2 * 3] = {
-  0xFF, 0xFF, 0xFF,
-  0x00, 0x00, 0x00
-};
+#include <inttypes.h>
 
 static const uint8_t ff_qt_default_palette_4[4 * 3] = {
   0x93, 0x65, 0x5E,
@@ -315,16 +309,5 @@ static const uint8_t ff_qt_default_palette_256[256 * 3] = {
   /* 254, 0xFE */  0x11, 0x11, 0x11,
   /* 255, 0xFF */  0x00, 0x00, 0x00
 };
-
-/**
- * Retrieve the palette (or "color table" in QuickTime terms), either
- * from the video sample description, or from the default Macintosh
- * palette.
- *
- * The file offset of the AVIOContext pointed to by the 'pb' variable
- * should be the start of the video sample description (the sample
- * description size and the data format).
- */
-int ff_get_qtpalette(int codec_id, AVIOContext *pb, uint32_t *palette);
 
 #endif /* AVFORMAT_QTPALETTE_H */

@@ -405,9 +405,6 @@ typedef struct RTSPState {
      * User-Agent string
      */
     char *user_agent;
-
-    char default_lang[4];
-    int buffer_size;
 } RTSPState;
 
 #define RTSP_FLAG_FILTER_SRC  0x1    /**< Filter incoming UDP packets -
@@ -470,8 +467,7 @@ typedef struct RTSPStream {
     char crypto_params[100];
 } RTSPStream;
 
-void ff_rtsp_parse_line(AVFormatContext *s,
-                        RTSPMessageHeader *reply, const char *buf,
+void ff_rtsp_parse_line(RTSPMessageHeader *reply, const char *buf,
                         RTSPState *rt, const char *method);
 
 /**

@@ -139,10 +139,12 @@ static void hds_free(AVFormatContext *s)
         return;
     for (i = 0; i < s->nb_streams; i++) {
         OutputStream *os = &c->streams[i];
-        avio_closep(&os->out);
+        if (os->out)
+            avio_close(os->out);
+        os->out = NULL;
         if (os->ctx && os->ctx_inited)
             av_write_trailer(os->ctx);
-        if (os->ctx)
+        if (os->ctx && os->ctx->pb)
             av_freep(&os->ctx->pb);
         if (os->ctx)
             avformat_free_context(os->ctx);
@@ -162,7 +164,7 @@ static int write_manifest(AVFormatContext *s, int final)
     AVIOContext *out;
     char filename[1024], temp_filename[1024];
     int ret, i;
-    double duration = 0;
+    float duration = 0;
 
     if (c->nb_streams > 0)
         duration = c->streams[0].last_ts * av_q2d(s->streams[0]->time_base);
@@ -309,7 +311,8 @@ static void close_file(OutputStream *os)
     avio_seek(os->out, 0, SEEK_SET);
     avio_wb32(os->out, pos);
     avio_flush(os->out);
-    avio_closep(&os->out);
+    avio_close(os->out);
+    os->out = NULL;
 }
 
 static int hds_write_header(AVFormatContext *s)
@@ -569,7 +572,7 @@ static const AVOption options[] = {
     { "window_size", "number of fragments kept in the manifest", OFFSET(window_size), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, E },
     { "extra_window_size", "number of fragments kept outside of the manifest before removing from disk", OFFSET(extra_window_size), AV_OPT_TYPE_INT, { .i64 = 5 }, 0, INT_MAX, E },
     { "min_frag_duration", "minimum fragment duration (in microseconds)", OFFSET(min_frag_duration), AV_OPT_TYPE_INT64, { .i64 = 10000000 }, 0, INT_MAX, E },
-    { "remove_at_exit", "remove all fragments when finished", OFFSET(remove_at_exit), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
+    { "remove_at_exit", "remove all fragments when finished", OFFSET(remove_at_exit), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, E },
     { NULL },
 };
 

@@ -19,7 +19,6 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavutil/imgutils.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/opt.h"
@@ -39,7 +38,6 @@ static int rawvideo_read_header(AVFormatContext *ctx)
     RawVideoDemuxerContext *s = ctx->priv_data;
     enum AVPixelFormat pix_fmt;
     AVStream *st;
-    int packet_size;
 
     st = avformat_new_stream(ctx, NULL);
     if (!st)
@@ -60,11 +58,7 @@ static int rawvideo_read_header(AVFormatContext *ctx)
     st->codec->width  = s->width;
     st->codec->height = s->height;
     st->codec->pix_fmt = pix_fmt;
-    packet_size = av_image_get_buffer_size(st->codec->pix_fmt, s->width, s->height, 1);
-    if (packet_size < 0)
-        return packet_size;
-    ctx->packet_size = packet_size;
-    st->codec->bit_rate = av_rescale_q(ctx->packet_size,
+    st->codec->bit_rate = av_rescale_q(avpicture_get_size(st->codec->pix_fmt, s->width, s->height),
                                        (AVRational){8,1}, st->time_base);
 
     return 0;
@@ -73,10 +67,18 @@ static int rawvideo_read_header(AVFormatContext *ctx)
 
 static int rawvideo_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
-    int ret;
+    int packet_size, ret, width, height;
+    AVStream *st = s->streams[0];
 
-    ret = av_get_packet(s->pb, pkt, s->packet_size);
-    pkt->pts = pkt->dts = pkt->pos / s->packet_size;
+    width = st->codec->width;
+    height = st->codec->height;
+
+    packet_size = avpicture_get_size(st->codec->pix_fmt, width, height);
+    if (packet_size < 0)
+        return -1;
+
+    ret = av_get_packet(s->pb, pkt, packet_size);
+    pkt->pts = pkt->dts = pkt->pos / packet_size;
 
     pkt->stream_index = 0;
     if (ret < 0)

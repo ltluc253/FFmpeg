@@ -298,7 +298,7 @@ restart:
 
 fail:
     if (ret < 0)
-        av_packet_unref(pkt);
+        av_free_packet(pkt);
     return ret;
 }
 

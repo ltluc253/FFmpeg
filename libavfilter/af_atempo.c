@@ -1012,29 +1012,26 @@ static int query_formats(AVFilterContext *ctx)
         AV_SAMPLE_FMT_DBL,
         AV_SAMPLE_FMT_NONE
     };
-    int ret;
 
     layouts = ff_all_channel_layouts();
     if (!layouts) {
         return AVERROR(ENOMEM);
     }
-    ret = ff_set_common_channel_layouts(ctx, layouts);
-    if (ret < 0)
-        return ret;
+    ff_set_common_channel_layouts(ctx, layouts);
 
     formats = ff_make_format_list(sample_fmts);
     if (!formats) {
         return AVERROR(ENOMEM);
     }
-    ret = ff_set_common_formats(ctx, formats);
-    if (ret < 0)
-        return ret;
+    ff_set_common_formats(ctx, formats);
 
     formats = ff_all_samplerates();
     if (!formats) {
         return AVERROR(ENOMEM);
     }
-    return ff_set_common_samplerates(ctx, formats);
+    ff_set_common_samplerates(ctx, formats);
+
+    return 0;
 }
 
 static int config_props(AVFilterLink *inlink)
@@ -1045,6 +1042,8 @@ static int config_props(AVFilterLink *inlink)
     enum AVSampleFormat format = inlink->format;
     int sample_rate = (int)inlink->sample_rate;
     int channels = av_get_channel_layout_nb_channels(inlink->channel_layout);
+
+    ctx->outputs[0]->flags |= FF_LINK_FLAG_REQUEST_LOOP;
 
     return yae_reset(atempo, format, sample_rate, channels);
 }

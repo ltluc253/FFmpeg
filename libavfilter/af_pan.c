@@ -37,7 +37,7 @@
 #include "formats.h"
 #include "internal.h"
 
-#define MAX_CHANNELS 64
+#define MAX_CHANNELS 63
 
 typedef struct PanContext {
     const AVClass *class;
@@ -227,29 +227,27 @@ static int query_formats(AVFilterContext *ctx)
     AVFilterLink *outlink = ctx->outputs[0];
     AVFilterFormats *formats = NULL;
     AVFilterChannelLayouts *layouts;
-    int ret;
 
     pan->pure_gains = are_gains_pure(pan);
     /* libswr supports any sample and packing formats */
-    if ((ret = ff_set_common_formats(ctx, ff_all_formats(AVMEDIA_TYPE_AUDIO))) < 0)
-        return ret;
+    ff_set_common_formats(ctx, ff_all_formats(AVMEDIA_TYPE_AUDIO));
 
     formats = ff_all_samplerates();
-    if ((ret = ff_set_common_samplerates(ctx, formats)) < 0)
-        return ret;
+    if (!formats)
+        return AVERROR(ENOMEM);
+    ff_set_common_samplerates(ctx, formats);
 
     // inlink supports any channel layout
     layouts = ff_all_channel_counts();
-    if ((ret = ff_channel_layouts_ref(layouts, &inlink->out_channel_layouts)) < 0)
-        return ret;
+    ff_channel_layouts_ref(layouts, &inlink->out_channel_layouts);
 
     // outlink supports only requested output channel layout
     layouts = NULL;
-    if ((ret = ff_add_channel_layout(&layouts,
+    ff_add_channel_layout(&layouts,
                           pan->out_channel_layout ? pan->out_channel_layout :
-                          FF_COUNT2LAYOUT(pan->nb_output_channels))) < 0)
-        return ret;
-    return ff_channel_layouts_ref(layouts, &outlink->in_channel_layouts);
+                          FF_COUNT2LAYOUT(pan->nb_output_channels));
+    ff_channel_layouts_ref(layouts, &outlink->in_channel_layouts);
+    return 0;
 }
 
 static int config_props(AVFilterLink *link)

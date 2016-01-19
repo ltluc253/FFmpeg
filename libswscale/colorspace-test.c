@@ -45,7 +45,7 @@ int main(int argc, char **argv)
         return -1;
 
     av_log(NULL, AV_LOG_INFO, "memory corruption test ...\n");
-    ff_sws_rgb2rgb_init();
+    sws_rgb2rgb_init();
 
     for (funcNum = 0; ; funcNum++) {
         struct func_info_s {

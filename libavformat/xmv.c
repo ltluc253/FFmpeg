@@ -294,7 +294,6 @@ static int xmv_process_packet_header(AVFormatContext *s)
 {
     XMVDemuxContext *xmv = s->priv_data;
     AVIOContext     *pb  = s->pb;
-    int ret;
 
     uint8_t  data[8];
     uint16_t audio_track;
@@ -382,10 +381,9 @@ static int xmv_process_packet_header(AVFormatContext *s)
                 av_assert0(xmv->video.stream_index < s->nb_streams);
 
                 if (vst->codec->extradata_size < 4) {
-                    av_freep(&vst->codec->extradata);
+                    av_free(vst->codec->extradata);
 
-                    if ((ret = ff_alloc_extradata(vst->codec, 4)) < 0)
-                        return ret;
+                    ff_alloc_extradata(vst->codec, 4);
                 }
 
                 memcpy(vst->codec->extradata, xmv->video.extradata, 4);
@@ -573,7 +571,6 @@ static int xmv_read_packet(AVFormatContext *s,
 AVInputFormat ff_xmv_demuxer = {
     .name           = "xmv",
     .long_name      = NULL_IF_CONFIG_SMALL("Microsoft XMV"),
-    .extensions     = "xmv",
     .priv_data_size = sizeof(XMVDemuxContext),
     .read_probe     = xmv_probe,
     .read_header    = xmv_read_header,

@@ -572,8 +572,7 @@ static int mss4_decode_frame(AVCodecContext *avctx, void *data, int *got_frame,
             ff_mss34_gen_quant_mat(c->quant_mat[i], quality, !i);
     }
 
-    if ((ret = init_get_bits8(&gb, buf + HEADER_SIZE, buf_size - HEADER_SIZE)) < 0)
-        return ret;
+    init_get_bits8(&gb, buf + HEADER_SIZE, (buf_size - HEADER_SIZE));
 
     mb_width  = FFALIGN(width,  16) >> 4;
     mb_height = FFALIGN(height, 16) >> 4;
@@ -651,7 +650,7 @@ static av_cold int mss4_decode_init(AVCodecContext *avctx)
     }
     for (i = 0; i < 3; i++) {
         c->dc_stride[i] = FFALIGN(avctx->width, 16) >> (2 + !!i);
-        c->prev_dc[i]   = av_malloc_array(c->dc_stride[i], sizeof(**c->prev_dc));
+        c->prev_dc[i]   = av_malloc(sizeof(**c->prev_dc) * c->dc_stride[i]);
         if (!c->prev_dc[i]) {
             av_log(avctx, AV_LOG_ERROR, "Cannot allocate buffer\n");
             mss4_free_vlcs(c);
@@ -679,5 +678,5 @@ AVCodec ff_mts2_decoder = {
     .init           = mss4_decode_init,
     .close          = mss4_decode_end,
     .decode         = mss4_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    .capabilities   = CODEC_CAP_DR1,
 };

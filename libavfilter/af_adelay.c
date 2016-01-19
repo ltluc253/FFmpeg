@@ -64,26 +64,23 @@ static int query_formats(AVFilterContext *ctx)
         AV_SAMPLE_FMT_FLTP, AV_SAMPLE_FMT_DBLP,
         AV_SAMPLE_FMT_NONE
     };
-    int ret;
 
-    layouts = ff_all_channel_counts();
+    layouts = ff_all_channel_layouts();
     if (!layouts)
         return AVERROR(ENOMEM);
-    ret = ff_set_common_channel_layouts(ctx, layouts);
-    if (ret < 0)
-        return ret;
+    ff_set_common_channel_layouts(ctx, layouts);
 
     formats = ff_make_format_list(sample_fmts);
     if (!formats)
         return AVERROR(ENOMEM);
-    ret = ff_set_common_formats(ctx, formats);
-    if (ret < 0)
-        return ret;
+    ff_set_common_formats(ctx, formats);
 
     formats = ff_all_samplerates();
     if (!formats)
         return AVERROR(ENOMEM);
-    return ff_set_common_samplerates(ctx, formats);
+    ff_set_common_samplerates(ctx, formats);
+
+    return 0;
 }
 
 #define DELAY(name, type, fill)                                           \
@@ -192,10 +189,8 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
         return ff_filter_frame(ctx->outputs[0], frame);
 
     out_frame = ff_get_audio_buffer(inlink, frame->nb_samples);
-    if (!out_frame) {
-        av_frame_free(&frame);
+    if (!out_frame)
         return AVERROR(ENOMEM);
-    }
     av_frame_copy_props(out_frame, frame);
 
     for (i = 0; i < s->nb_delays; i++) {

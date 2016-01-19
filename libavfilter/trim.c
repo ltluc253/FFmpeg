@@ -114,6 +114,12 @@ static int config_input(AVFilterLink *inlink)
     return 0;
 }
 
+static int config_output(AVFilterLink *outlink)
+{
+    outlink->flags |= FF_LINK_FLAG_REQUEST_LOOP;
+    return 0;
+}
+
 #define OFFSET(x) offsetof(TrimContext, x)
 #define COMMON_OPTS                                                                                                                                                         \
     { "starti",      "Timestamp of the first frame that "                                                                                                        \
@@ -174,8 +180,7 @@ static int trim_filter_frame(AVFilterLink *inlink, AVFrame *frame)
             drop = 0;
 
         if (drop) {
-            s->eof = 1;
-            ff_avfilter_link_set_out_status(inlink, AVERROR_EOF, AV_NOPTS_VALUE);
+            s->eof = inlink->closed = 1;
             goto drop;
         }
     }
@@ -218,6 +223,7 @@ static const AVFilterPad trim_outputs[] = {
     {
         .name         = "default",
         .type         = AVMEDIA_TYPE_VIDEO,
+        .config_props = config_output,
     },
     { NULL }
 };
@@ -306,8 +312,7 @@ static int atrim_filter_frame(AVFilterLink *inlink, AVFrame *frame)
         }
 
         if (drop) {
-            s->eof = 1;
-            ff_avfilter_link_set_out_status(inlink, AVERROR_EOF, AV_NOPTS_VALUE);
+            s->eof = inlink->closed = 1;
             goto drop;
         }
     }
@@ -373,6 +378,7 @@ static const AVFilterPad atrim_outputs[] = {
     {
         .name         = "default",
         .type         = AVMEDIA_TYPE_AUDIO,
+        .config_props = config_output,
     },
     { NULL }
 };
@@ -381,7 +387,6 @@ AVFilter ff_af_atrim = {
     .name        = "atrim",
     .description = NULL_IF_CONFIG_SMALL("Pick one continuous section from the input, drop the rest."),
     .init        = init,
-    .query_formats = ff_query_formats_all,
     .priv_size   = sizeof(TrimContext),
     .priv_class  = &atrim_class,
     .inputs      = atrim_inputs,

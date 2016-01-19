@@ -203,7 +203,7 @@ cglobal vector_fmul_window, 5, 6, 6, dst, src0, src1, win, len, len1
     add     dstq, lenq
     add     winq, lenq
     neg     lenq
-.loop:
+.loop
     mova      m0, [winq  + lenq]
     mova      m4, [src0q + lenq]
 %if cpuflag(sse)
@@ -359,7 +359,12 @@ cglobal scalarproduct_float, 3,3,2, v1, v2, offset
 ;-----------------------------------------------------------------------------
 INIT_XMM sse
 cglobal butterflies_float, 3,3,3, src0, src1, len
-    shl       lend, 2
+%if ARCH_X86_64
+    movsxd    lenq, lend
+%endif
+    test      lenq, lenq
+    jz .end
+    shl       lenq, 2
     add      src0q, lenq
     add      src1q, lenq
     neg       lenq
@@ -372,4 +377,5 @@ cglobal butterflies_float, 3,3,3, src0, src1, len
     mova        [src0q + lenq], m0
     add       lenq, mmsize
     jl .loop
+.end:
     REP_RET

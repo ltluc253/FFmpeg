@@ -44,7 +44,9 @@ static int query_formats(AVFilterContext *ctx)
 
     if (!(formats = ff_make_format_list(sample_fmts)))
         return AVERROR(ENOMEM);
-    return ff_set_common_formats(ctx, formats);
+    ff_set_common_formats(ctx, formats);
+
+    return 0;
 }
 
 static int filter_frame(AVFilterLink *inlink, AVFrame *samples)
@@ -78,7 +80,7 @@ static inline double logdb(uint64_t v)
     double d = v / (double)(0x8000 * 0x8000);
     if (!v)
         return MAX_DB;
-    return -log10(d) * 10;
+    return log(d) * -4.3429448190325182765112891891660508229; /* -10/log(10) */
 }
 
 static void print_stats(AVFilterContext *ctx)

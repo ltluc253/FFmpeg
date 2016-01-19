@@ -24,13 +24,13 @@
 #include "voc.h"
 #include "libavutil/intreadwrite.h"
 
-typedef struct C93BlockRecord {
+typedef struct {
     uint16_t index;
     uint8_t length;
     uint8_t frames;
 } C93BlockRecord;
 
-typedef struct C93DemuxContext {
+typedef struct {
     VocDecContext voc;
 
     C93BlockRecord block_records[512];
@@ -188,7 +188,7 @@ static int read_packet(AVFormatContext *s, AVPacket *pkt)
     return 0;
 
     fail:
-    av_packet_unref(pkt);
+    av_free_packet(pkt);
     return ret;
 }
 

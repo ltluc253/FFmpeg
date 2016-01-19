@@ -20,7 +20,6 @@
  */
 
 #include "libavutil/channel_layout.h"
-#include "libavutil/imgutils.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/intfloat.h"
 #include "avformat.h"
@@ -33,7 +32,7 @@ static const AVCodecTag nuv_audio_tags[] = {
     { AV_CODEC_ID_NONE,      0 },
 };
 
-typedef struct NUVContext {
+typedef struct {
     int v_id;
     int a_id;
     int rtjpg_video;
@@ -195,10 +194,6 @@ static int nuv_header(AVFormatContext *s)
             return AVERROR(ENOMEM);
         ctx->v_id = vst->index;
 
-        ret = av_image_check_size(width, height, 0, ctx);
-        if (ret < 0)
-            return ret;
-
         vst->codec->codec_type            = AVMEDIA_TYPE_VIDEO;
         vst->codec->codec_id              = AV_CODEC_ID_NUV;
         vst->codec->width                 = width;
@@ -284,7 +279,7 @@ static int nuv_packet(AVFormatContext *s, AVPacket *pkt)
             memcpy(pkt->data, hdr, copyhdrsize);
             ret = avio_read(pb, pkt->data + copyhdrsize, size);
             if (ret < 0) {
-                av_packet_unref(pkt);
+                av_free_packet(pkt);
                 return ret;
             }
             if (ret < size)

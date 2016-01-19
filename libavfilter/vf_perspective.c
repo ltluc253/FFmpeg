@@ -19,7 +19,6 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavutil/avassert.h"
 #include "libavutil/eval.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/pixdesc.h"
@@ -93,10 +92,8 @@ static int query_formats(AVFilterContext *ctx)
         AV_PIX_FMT_GBRP, AV_PIX_FMT_GBRAP, AV_PIX_FMT_GRAY8, AV_PIX_FMT_NONE
     };
 
-    AVFilterFormats *fmts_list = ff_make_format_list(pix_fmts);
-    if (!fmts_list)
-        return AVERROR(ENOMEM);
-    return ff_set_common_formats(ctx, fmts_list);
+    ff_set_common_formats(ctx, ff_make_format_list(pix_fmts));
+    return 0;
 }
 
 static inline double get_coeff(double d)
@@ -205,18 +202,16 @@ static int config_input(AVFilterLink *inlink)
         x8 = t1 * t2 * (ref[0][1] * ref[1][0] - ref[0][0] * ref[1][1]) +
              t0 * t3 * (ref[2][0] * ref[3][1] - ref[2][1] * ref[3][0]);
         break;
-    default:
-        av_assert0(0);
     }
 
     for (y = 0; y < h; y++){
         for (x = 0; x < w; x++){
             int u, v;
 
-            u =      lrint(SUB_PIXELS * (x0 * x + x1 * y + x2) /
-                                        (x6 * x + x7 * y + x8));
-            v =      lrint(SUB_PIXELS * (x3 * x + x4 * y + x5) /
-                                        (x6 * x + x7 * y + x8));
+            u = (int)floor(SUB_PIXELS * (x0 * x + x1 * y + x2) /
+                                        (x6 * x + x7 * y + x8) + 0.5);
+            v = (int)floor(SUB_PIXELS * (x3 * x + x4 * y + x5) /
+                                        (x6 * x + x7 * y + x8) + 0.5);
 
             s->pv[x + y * w][0] = u;
             s->pv[x + y * w][1] = v;
@@ -235,7 +230,7 @@ static int config_input(AVFilterLink *inlink)
             sum += temp[j];
 
         for (j = 0; j < 4; j++)
-            s->coeff[i][j] = lrint((1 << COEFF_BITS) * temp[j] / sum);
+            s->coeff[i][j] = (int)floor((1 << COEFF_BITS) * temp[j] / sum + 0.5);
     }
 
     return 0;
@@ -322,7 +317,7 @@ static int resample_cubic(AVFilterContext *ctx, void *arg,
             }
 
             sum = (sum + (1<<(COEFF_BITS * 2 - 1))) >> (COEFF_BITS * 2);
-            sum = av_clip_uint8(sum);
+            sum = av_clip(sum, 0, 255);
             dst[x + y * dst_linesize] = sum;
         }
     }
@@ -397,7 +392,7 @@ static int resample_linear(AVFilterContext *ctx, void *arg,
                 }
             }
 
-            sum = av_clip_uint8(sum);
+            sum = av_clip(sum, 0, 255);
             dst[x + y * dst_linesize] = sum;
         }
     }

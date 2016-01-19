@@ -215,7 +215,7 @@ static int make_cdt16_entry(int p1, int p2, int16_t *cdt)
     b = cdt[p2];
     r = cdt[p1] << 11;
     lo = b + r;
-    return (lo + (lo * (1 << 16))) * 2;
+    return (lo + (lo << 16)) << 1;
 }
 
 static int make_ydt24_entry(int p1, int p2, int16_t *ydt)
@@ -224,7 +224,7 @@ static int make_ydt24_entry(int p1, int p2, int16_t *ydt)
 
     lo = ydt[p1];
     hi = ydt[p2];
-    return (lo + (hi * (1 << 8)) + (hi * (1 << 16))) * 2;
+    return (lo + (hi << 8) + (hi << 16)) << 1;
 }
 
 static int make_cdt24_entry(int p1, int p2, int16_t *cdt)
@@ -232,8 +232,8 @@ static int make_cdt24_entry(int p1, int p2, int16_t *cdt)
     int r, b;
 
     b = cdt[p2];
-    r = cdt[p1] * (1 << 16);
-    return (b+r) * 2;
+    r = cdt[p1]<<16;
+    return (b+r) << 1;
 }
 
 static void gen_vector_table15(TrueMotion1Context *s, const uint8_t *sel_vector_table)
@@ -396,7 +396,7 @@ static int truemotion1_decode_header(TrueMotion1Context *s)
     }
 
     if (compression_types[header.compression].algorithm == ALGO_RGB24H) {
-        new_pix_fmt = AV_PIX_FMT_0RGB32;
+        new_pix_fmt = AV_PIX_FMT_RGB32;
         width_shift = 1;
     } else
         new_pix_fmt = AV_PIX_FMT_RGB555; // RGB565 is supported as well
@@ -645,8 +645,7 @@ static void truemotion1_decode_16bit(TrueMotion1Context *s)
         current_pixel_pair = (unsigned int *)current_line;
         vert_pred = s->vert_pred;
         mb_change_index = 0;
-        if (!keyframe)
-            mb_change_byte = mb_change_bits[mb_change_index++];
+        mb_change_byte = mb_change_bits[mb_change_index++];
         mb_change_byte_mask = 0x01;
         pixels_left = s->avctx->width;
 
@@ -917,5 +916,5 @@ AVCodec ff_truemotion1_decoder = {
     .init           = truemotion1_decode_init,
     .close          = truemotion1_decode_end,
     .decode         = truemotion1_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    .capabilities   = CODEC_CAP_DR1,
 };

@@ -177,7 +177,7 @@ static int tm2_build_huff_table(TM2Context *ctx, TM2Codes *code)
 
     if (!huff.nums || !huff.bits || !huff.lens) {
         res = AVERROR(ENOMEM);
-        goto out;
+        goto fail;
     }
 
     res = tm2_read_tree(ctx, 0, 0, &huff);
@@ -203,14 +203,13 @@ static int tm2_build_huff_table(TM2Context *ctx, TM2Codes *code)
             code->recode = av_malloc_array(code->length, sizeof(int));
             if (!code->recode) {
                 res = AVERROR(ENOMEM);
-                goto out;
+                goto fail;
             }
             for (i = 0; i < code->length; i++)
                 code->recode[i] = huff.nums[i];
         }
     }
-
-out:
+fail:
     /* free allocated memory */
     av_free(huff.nums);
     av_free(huff.bits);
@@ -303,8 +302,8 @@ static int tm2_read_stream(TM2Context *ctx, const uint8_t *buf, int stream_id, i
     if (len == 0)
         return 4;
 
-    if (len >= INT_MAX / 4 - 1 || len < 0 || skip > buf_size) {
-        av_log(ctx->avctx, AV_LOG_ERROR, "Error, invalid stream size.\n");
+    if (len >= INT_MAX/4-1 || len < 0 || skip > buf_size) {
+        av_log(ctx->avctx, AV_LOG_ERROR, "invalid stream size\n");
         return AVERROR_INVALIDDATA;
     }
 
@@ -344,35 +343,31 @@ static int tm2_read_stream(TM2Context *ctx, const uint8_t *buf, int stream_id, i
     /* check if we have sane number of tokens */
     if ((toks < 0) || (toks > 0xFFFFFF)) {
         av_log(ctx->avctx, AV_LOG_ERROR, "Incorrect number of tokens: %i\n", toks);
-        ret = AVERROR_INVALIDDATA;
-        goto end;
+        tm2_free_codes(&codes);
+        return AVERROR_INVALIDDATA;
     }
     ret = av_reallocp_array(&ctx->tokens[stream_id], toks, sizeof(int));
     if (ret < 0) {
         ctx->tok_lens[stream_id] = 0;
-        goto end;
+        return ret;
     }
     ctx->tok_lens[stream_id] = toks;
     len = bytestream2_get_be32(&gb);
     if (len > 0) {
         pos = bytestream2_tell(&gb);
-        if (skip <= pos) {
-            ret = AVERROR_INVALIDDATA;
-            goto end;
-        }
+        if (skip <= pos)
+            return AVERROR_INVALIDDATA;
         init_get_bits(&ctx->gb, buf + pos, (skip - pos) * 8);
         for (i = 0; i < toks; i++) {
             if (get_bits_left(&ctx->gb) <= 0) {
                 av_log(ctx->avctx, AV_LOG_ERROR, "Incorrect number of tokens: %i\n", toks);
-                ret = AVERROR_INVALIDDATA;
-                goto end;
+                return AVERROR_INVALIDDATA;
             }
             ctx->tokens[stream_id][i] = tm2_get_token(&ctx->gb, &codes);
             if (stream_id <= TM2_MOT && ctx->tokens[stream_id][i] >= TM2_DELTAS || ctx->tokens[stream_id][i]<0) {
                 av_log(ctx->avctx, AV_LOG_ERROR, "Invalid delta token index %d for type %d, n=%d\n",
                        ctx->tokens[stream_id][i], stream_id, i);
-                ret = AVERROR_INVALIDDATA;
-                goto end;
+                return AVERROR_INVALIDDATA;
             }
         }
     } else {
@@ -381,17 +376,13 @@ static int tm2_read_stream(TM2Context *ctx, const uint8_t *buf, int stream_id, i
             if (stream_id <= TM2_MOT && ctx->tokens[stream_id][i] >= TM2_DELTAS) {
                 av_log(ctx->avctx, AV_LOG_ERROR, "Invalid delta token index %d for type %d, n=%d\n",
                        ctx->tokens[stream_id][i], stream_id, i);
-                ret = AVERROR_INVALIDDATA;
-                goto end;
+                return AVERROR_INVALIDDATA;
             }
         }
     }
-
-    ret = skip;
-
-end:
     tm2_free_codes(&codes);
-    return ret;
+
+    return skip;
 }
 
 static inline int GET_TOK(TM2Context *ctx,int type)
@@ -1031,5 +1022,5 @@ AVCodec ff_truemotion2_decoder = {
     .init           = decode_init,
     .close          = decode_end,
     .decode         = decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    .capabilities   = CODEC_CAP_DR1,
 };

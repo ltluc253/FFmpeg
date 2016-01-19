@@ -27,7 +27,6 @@
 
 #include "mpegvideo.h"
 #include "put_bits.h"
-#include "rv10.h"
 
 int ff_rv10_encode_picture_header(MpegEncContext *s, int picture_number)
 {
@@ -50,8 +49,7 @@ int ff_rv10_encode_picture_header(MpegEncContext *s, int picture_number)
        to display the macroblocks is coded here */
     if(!full_frame){
         if (s->mb_width * s->mb_height >= (1U << 12)) {
-            avpriv_report_missing_feature(s->avctx, "Encoding frames with %d (>= 4096) macroblocks",
-                                          s->mb_width * s->mb_height);
+            avpriv_report_missing_feature(s, "Encoding frames with 4096 or more macroblocks");
             return AVERROR(ENOSYS);
         }
         put_bits(&s->pb, 6, 0); /* mb_x */
@@ -63,12 +61,7 @@ int ff_rv10_encode_picture_header(MpegEncContext *s, int picture_number)
     return 0;
 }
 
-static const AVClass rv10_class = {
-    .class_name = "rv10 encoder",
-    .item_name  = av_default_item_name,
-    .option     = ff_mpv_generic_options,
-    .version    = LIBAVUTIL_VERSION_INT,
-};
+FF_MPV_GENERIC_CLASS(rv10)
 
 AVCodec ff_rv10_encoder = {
     .name           = "rv10",

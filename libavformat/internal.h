@@ -31,12 +31,10 @@
 #define PROBE_BUF_MIN 2048
 #define PROBE_BUF_MAX (1 << 20)
 
-#define MAX_PROBE_PACKETS 2500
-
 #ifdef DEBUG
 #    define hex_dump_debug(class, buf, size) av_hex_dump_log(class, AV_LOG_DEBUG, buf, size)
 #else
-#    define hex_dump_debug(class, buf, size) do { if (0) av_hex_dump_log(class, AV_LOG_DEBUG, buf, size); } while(0)
+#    define hex_dump_debug(class, buf, size)
 #endif
 
 typedef struct AVCodecTag {
@@ -49,18 +47,6 @@ typedef struct CodecMime{
     enum AVCodecID id;
 } CodecMime;
 
-/*************************************************/
-/* fractional numbers for exact pts handling */
-
-/**
- * The exact value of the fractional number is: 'val + num / den'.
- * num is assumed to be 0 <= num < den.
- */
-typedef struct FFFrac {
-    int64_t val, num, den;
-} FFFrac;
-
-
 struct AVFormatInternal {
     /**
      * Number of streams relevant for interleaving.
@@ -68,80 +54,7 @@ struct AVFormatInternal {
      */
     int nb_interleaved_streams;
 
-    /**
-     * This buffer is only needed when packets were already buffered but
-     * not decoded, for example to get the codec parameters in MPEG
-     * streams.
-     */
-    struct AVPacketList *packet_buffer;
-    struct AVPacketList *packet_buffer_end;
-
-    /* av_seek_frame() support */
-    int64_t data_offset; /**< offset of the first packet */
-
-    /**
-     * Raw packets from the demuxer, prior to parsing and decoding.
-     * This buffer is used for buffering packets until the codec can
-     * be identified, as parsing cannot be done without knowing the
-     * codec.
-     */
-    struct AVPacketList *raw_packet_buffer;
-    struct AVPacketList *raw_packet_buffer_end;
-    /**
-     * Packets split by the parser get queued here.
-     */
-    struct AVPacketList *parse_queue;
-    struct AVPacketList *parse_queue_end;
-    /**
-     * Remaining size available for raw_packet_buffer, in bytes.
-     */
-#define RAW_PACKET_BUFFER_SIZE 2500000
-    int raw_packet_buffer_remaining_size;
-
-    /**
-     * Offset to remap timestamps to be non-negative.
-     * Expressed in timebase units.
-     * @see AVStream.mux_ts_offset
-     */
-    int64_t offset;
-
-    /**
-     * Timebase for the timestamp offset.
-     */
-    AVRational offset_timebase;
-
-#if FF_API_COMPUTE_PKT_FIELDS2
-    int missing_ts_warning;
-#endif
-
     int inject_global_side_data;
-
-    int avoid_negative_ts_use_pts;
-
-    /**
-     * Whether or not a header has already been written
-     */
-    int header_written;
-};
-
-struct AVStreamInternal {
-    /**
-     * Set to 1 if the codec allows reordering, so pts can be different
-     * from dts.
-     */
-    int reorder;
-
-    /**
-     * bitstream filter to run on stream
-     * - encoding: Set by muxer using ff_stream_add_bitstream_filter
-     * - decoding: unused
-     */
-    AVBitStreamFilterContext *bsfc;
-
-    /**
-     * Whether or not check_bitstream should still be run on each packet
-     */
-    int bitstream_checked;
 };
 
 #ifdef __GNUC__
@@ -172,6 +85,8 @@ char *ff_data_to_hex(char *buf, const uint8_t *src, int size, int lowercase);
  * @return the number of bytes written (or to be written, if data is null)
  */
 int ff_hex_to_data(uint8_t *data, const char *p);
+
+void ff_program_add_stream_index(AVFormatContext *ac, int progid, unsigned int idx);
 
 /**
  * Add packet to AVFormatContext->packet_buffer list, determining its
@@ -220,7 +135,7 @@ void ff_sdp_write_media(char *buff, int size, AVStream *st, int idx,
  * @param dst_stream the stream index within dst to write the packet to
  * @param pkt the packet to be written
  * @param src the muxer the packet originally was intended for
- * @param interleave 0->use av_write_frame, 1->av_interleaved_write_frame
+ * @param interleave 0->use av_write_frame, 1->av_write_interleaved_frame
  * @return the value av_write_frame returned
  */
 int ff_write_chained(AVFormatContext *dst, int dst_stream, AVPacket *pkt,
@@ -294,8 +209,6 @@ int ff_add_index_entry(AVIndexEntry **index_entries,
                        int *nb_index_entries,
                        unsigned int *index_entries_allocated_size,
                        int64_t pos, int64_t timestamp, int size, int distance, int flags);
-
-void ff_configure_buffers_for_index(AVFormatContext *s, int64_t time_tolerance);
 
 /**
  * Add a new chapter.
@@ -403,7 +316,7 @@ int ff_read_packet(AVFormatContext *s, AVPacket *pkt);
  * Interleave a packet per dts in an output media file.
  *
  * Packets with pkt->destruct == av_destruct_packet will be freed inside this
- * function, so they cannot be used after it. Note that calling av_packet_unref()
+ * function, so they cannot be used after it. Note that calling av_free_packet()
  * on them is still safe.
  *
  * @param s media file handle
@@ -454,26 +367,10 @@ enum AVCodecID ff_get_pcm_codec_id(int bps, int flt, int be, int sflags);
 AVRational ff_choose_timebase(AVFormatContext *s, AVStream *st, int min_precision);
 
 /**
- * Chooses a timebase for muxing the specified stream.
- */
-enum AVChromaLocation ff_choose_chroma_location(AVFormatContext *s, AVStream *st);
-
-/**
  * Generate standard extradata for AVC-Intra based on width/height and field
  * order.
  */
 int ff_generate_avci_extradata(AVStream *st);
-
-/**
- * Add a bitstream filter to a stream.
- *
- * @param st output stream to add a filter to
- * @param name the name of the filter to add
- * @param args filter-specific argument string
- * @return  >0 on success;
- *          AVERROR code on failure
- */
-int ff_stream_add_bitstream_filter(AVStream *st, const char *name, const char *args);
 
 /**
  * Wrap errno on rename() error.
@@ -494,7 +391,7 @@ static inline int ff_rename(const char *oldpath, const char *newpath, void *logc
 }
 
 /**
- * Allocate extradata with additional AV_INPUT_BUFFER_PADDING_SIZE at end
+ * Allocate extradata with additional FF_INPUT_BUFFER_PADDING_SIZE at end
  * which is always set to 0.
  *
  * @param size size of extradata
@@ -503,7 +400,7 @@ static inline int ff_rename(const char *oldpath, const char *newpath, void *logc
 int ff_alloc_extradata(AVCodecContext *avctx, int size);
 
 /**
- * Allocate extradata with additional AV_INPUT_BUFFER_PADDING_SIZE at end
+ * Allocate extradata with additional FF_INPUT_BUFFER_PADDING_SIZE at end
  * which is always set to 0 and fill it from pb.
  *
  * @param size size of extradata
@@ -538,14 +435,5 @@ enum AVWriteUncodedFrameFlags {
  * Copies the whilelists from one context to the other
  */
 int ff_copy_whitelists(AVFormatContext *dst, AVFormatContext *src);
-
-int ffio_open2_wrapper(struct AVFormatContext *s, AVIOContext **pb, const char *url, int flags,
-                       const AVIOInterruptCB *int_cb, AVDictionary **options);
-
-/**
- * Returned by demuxers to indicate that data was consumed but discarded
- * (ignored streams or junk data). The framework will re-call the demuxer.
- */
-#define FFERROR_REDO FFERRTAG('R','E','D','O')
 
 #endif /* AVFORMAT_INTERNAL_H */

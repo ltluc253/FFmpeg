@@ -21,11 +21,8 @@
 
 //#define DEBUG
 
-#include "libavutil/avassert.h"
 #include "libavutil/bprint.h"
 #include "libavutil/imgutils.h"
-#include "libavutil/stereo3d.h"
-
 #include "avcodec.h"
 #include "bytestream.h"
 #include "internal.h"
@@ -48,11 +45,8 @@ typedef struct PNGDecContext {
     int state;
     int width, height;
     int cur_w, cur_h;
-    int last_w, last_h;
     int x_offset, y_offset;
-    int last_x_offset, last_y_offset;
     uint8_t dispose_op, blend_op;
-    uint8_t last_dispose_op;
     int bit_depth;
     int color_type;
     int compression_type;
@@ -61,9 +55,8 @@ typedef struct PNGDecContext {
     int channels;
     int bits_per_pixel;
     int bpp;
-    int has_trns;
-    uint8_t transparent_color_be[6];
 
+    int frame_id;
     uint8_t *image_buf;
     int image_linesize;
     uint32_t palette[256];
@@ -279,10 +272,9 @@ static void png_filter_row(PNGDSPContext *dsp, uint8_t *dst, int filter_type,
         if (bpp > 2 && size > 4) {
             /* would write off the end of the array if we let it process
              * the last pixel with bpp=3 */
-            int w = (bpp & 3) ? size - 3 : size;
-
+            int w = bpp == 4 ? size : size - 3;
             if (w > i) {
-                dsp->add_paeth_prediction(dst + i, src + i, last + i, size - i, bpp);
+                dsp->add_paeth_prediction(dst + i, src + i, last + i, w - i, bpp);
                 i = w;
             }
         }
@@ -554,7 +546,7 @@ static int decode_ihdr_chunk(AVCodecContext *avctx, PNGDecContext *s,
     s->width  = s->cur_w = bytestream2_get_be32(&s->gb);
     s->height = s->cur_h = bytestream2_get_be32(&s->gb);
     if (av_image_check_size(s->width, s->height, 0, avctx)) {
-        s->cur_w = s->cur_h = s->width = s->height = 0;
+        s->width = s->height = 0;
         av_log(avctx, AV_LOG_ERROR, "Invalid image size\n");
         return AVERROR_INVALIDDATA;
     }
@@ -594,7 +586,6 @@ static int decode_idat_chunk(AVCodecContext *avctx, PNGDecContext *s,
                              uint32_t length, AVFrame *p)
 {
     int ret;
-    size_t byte_depth = s->bit_depth > 8 ? 2 : 1;
 
     if (!(s->state & PNG_IHDR)) {
         av_log(avctx, AV_LOG_ERROR, "IDAT without IHDR\n");
@@ -646,41 +637,8 @@ static int decode_idat_chunk(AVCodecContext *avctx, PNGDecContext *s,
             return AVERROR_INVALIDDATA;
         }
 
-        if (s->has_trns && s->color_type != PNG_COLOR_TYPE_PALETTE) {
-            switch (avctx->pix_fmt) {
-            case AV_PIX_FMT_RGB24:
-                avctx->pix_fmt = AV_PIX_FMT_RGBA;
-                break;
-
-            case AV_PIX_FMT_RGB48BE:
-                avctx->pix_fmt = AV_PIX_FMT_RGBA64BE;
-                break;
-
-            case AV_PIX_FMT_GRAY8:
-                avctx->pix_fmt = AV_PIX_FMT_YA8;
-                break;
-
-            case AV_PIX_FMT_GRAY16BE:
-                avctx->pix_fmt = AV_PIX_FMT_YA16BE;
-                break;
-
-            default:
-                avpriv_request_sample(avctx, "bit depth %d "
-                        "and color type %d with TRNS",
-                        s->bit_depth, s->color_type);
-                return AVERROR_INVALIDDATA;
-            }
-
-            s->bpp += byte_depth;
-        }
-
         if ((ret = ff_thread_get_buffer(avctx, &s->picture, AV_GET_BUFFER_FLAG_REF)) < 0)
             return ret;
-        if (avctx->codec_id == AV_CODEC_ID_APNG && s->last_dispose_op != APNG_DISPOSE_OP_PREVIOUS) {
-            ff_thread_release_buffer(avctx, &s->previous_picture);
-            if ((ret = ff_thread_get_buffer(avctx, &s->previous_picture, AV_GET_BUFFER_FLAG_REF)) < 0)
-                return ret;
-        }
         ff_thread_finish_setup(avctx);
 
         p->pict_type        = AV_PICTURE_TYPE_I;
@@ -697,7 +655,7 @@ static int decode_idat_chunk(AVCodecContext *avctx, PNGDecContext *s,
                     s->cur_w);
             s->crow_size = s->pass_row_size + 1;
         }
-        ff_dlog(avctx, "row_size=%d crow_size =%d\n",
+        av_dlog(avctx, "row_size=%d crow_size =%d\n",
                 s->row_size, s->crow_size);
         s->image_buf      = p->data[0];
         s->image_linesize = p->linesize[0];
@@ -724,21 +682,9 @@ static int decode_idat_chunk(AVCodecContext *avctx, PNGDecContext *s,
         s->zstream.avail_out = s->crow_size;
         s->zstream.next_out  = s->crow_buf;
     }
-
     s->state |= PNG_IDAT;
-
-    /* set image to non-transparent bpp while decompressing */
-    if (s->has_trns && s->color_type != PNG_COLOR_TYPE_PALETTE)
-        s->bpp -= byte_depth;
-
-    ret = png_decode_idat(s, length);
-
-    if (s->has_trns && s->color_type != PNG_COLOR_TYPE_PALETTE)
-        s->bpp += byte_depth;
-
-    if (ret < 0)
+    if ((ret = png_decode_idat(s, length)) < 0)
         return ret;
-
     bytestream2_skip(&s->gb, 4); /* crc */
 
     return 0;
@@ -772,34 +718,16 @@ static int decode_trns_chunk(AVCodecContext *avctx, PNGDecContext *s,
 {
     int v, i;
 
-    if (s->color_type == PNG_COLOR_TYPE_PALETTE) {
-        if (length > 256 || !(s->state & PNG_PLTE))
-            return AVERROR_INVALIDDATA;
-
-        for (i = 0; i < length; i++) {
-            v = bytestream2_get_byte(&s->gb);
-            s->palette[i] = (s->palette[i] & 0x00ffffff) | (v << 24);
-        }
-    } else if (s->color_type == PNG_COLOR_TYPE_GRAY || s->color_type == PNG_COLOR_TYPE_RGB) {
-        if ((s->color_type == PNG_COLOR_TYPE_GRAY && length != 2) ||
-            (s->color_type == PNG_COLOR_TYPE_RGB && length != 6))
-            return AVERROR_INVALIDDATA;
-
-        for (i = 0; i < length / 2; i++) {
-            /* only use the least significant bits */
-            v = bytestream2_get_be16(&s->gb) & ((1 << s->bit_depth) - 1);
-
-            if (s->bit_depth > 8)
-                AV_WB16(&s->transparent_color_be[2 * i], v);
-            else
-                s->transparent_color_be[i] = v;
-        }
-    } else {
+    /* read the transparency. XXX: Only palette mode supported */
+    if (s->color_type != PNG_COLOR_TYPE_PALETTE ||
+            length > 256 ||
+            !(s->state & PNG_PLTE))
         return AVERROR_INVALIDDATA;
+    for (i = 0; i < length; i++) {
+        v = bytestream2_get_byte(&s->gb);
+        s->palette[i] = (s->palette[i] & 0x00ffffff) | (v << 24);
     }
-
-    bytestream2_skip(&s->gb, 4); /* crc */
-    s->has_trns = 1;
+    bytestream2_skip(&s->gb, 4);     /* crc */
 
     return 0;
 }
@@ -891,12 +819,6 @@ static int decode_fctl_chunk(AVCodecContext *avctx, PNGDecContext *s,
         return AVERROR_INVALIDDATA;
     }
 
-    s->last_w = s->cur_w;
-    s->last_h = s->cur_h;
-    s->last_x_offset = s->x_offset;
-    s->last_y_offset = s->y_offset;
-    s->last_dispose_op = s->dispose_op;
-
     sequence_number = bytestream2_get_be32(&s->gb);
     cur_w           = bytestream2_get_be32(&s->gb);
     cur_h           = bytestream2_get_be32(&s->gb);
@@ -917,27 +839,15 @@ static int decode_fctl_chunk(AVCodecContext *avctx, PNGDecContext *s,
         cur_w > s->width - x_offset|| cur_h > s->height - y_offset)
             return AVERROR_INVALIDDATA;
 
-    if (blend_op != APNG_BLEND_OP_OVER && blend_op != APNG_BLEND_OP_SOURCE) {
-        av_log(avctx, AV_LOG_ERROR, "Invalid blend_op %d\n", blend_op);
-        return AVERROR_INVALIDDATA;
-    }
-
-    if (sequence_number == 0 && dispose_op == APNG_DISPOSE_OP_PREVIOUS) {
-        // No previous frame to revert to for the first frame
-        // Spec says to just treat it as a APNG_DISPOSE_OP_BACKGROUND
-        dispose_op = APNG_DISPOSE_OP_BACKGROUND;
-    }
-
-    if (blend_op == APNG_BLEND_OP_OVER && !s->has_trns && (
-            avctx->pix_fmt == AV_PIX_FMT_RGB24 ||
-            avctx->pix_fmt == AV_PIX_FMT_RGB48BE ||
-            avctx->pix_fmt == AV_PIX_FMT_PAL8 ||
-            avctx->pix_fmt == AV_PIX_FMT_GRAY8 ||
-            avctx->pix_fmt == AV_PIX_FMT_GRAY16BE ||
-            avctx->pix_fmt == AV_PIX_FMT_MONOBLACK
-        )) {
-        // APNG_BLEND_OP_OVER is the same as APNG_BLEND_OP_SOURCE when there is no alpha channel
-        blend_op = APNG_BLEND_OP_SOURCE;
+    /* always (re)start with a clean frame */
+    if (sequence_number == 0) {
+        s->dispose_op = APNG_DISPOSE_OP_BACKGROUND;
+        s->frame_id = 0;
+    } else {
+        s->frame_id++;
+        if (s->frame_id == 1 && s->dispose_op == APNG_DISPOSE_OP_PREVIOUS)
+            /* previous for the second frame is the first frame */
+            s->dispose_op = APNG_DISPOSE_OP_NONE;
     }
 
     s->cur_w      = cur_w;
@@ -973,112 +883,94 @@ static void handle_p_frame_png(PNGDecContext *s, AVFrame *p)
 static int handle_p_frame_apng(AVCodecContext *avctx, PNGDecContext *s,
                                AVFrame *p)
 {
-    size_t x, y;
-    uint8_t *buffer;
+    int i, j;
+    uint8_t *pd      = p->data[0];
+    uint8_t *pd_last = s->last_picture.f->data[0];
+    uint8_t *pd_last_region = s->dispose_op == APNG_DISPOSE_OP_PREVIOUS ?
+                                s->previous_picture.f->data[0] : s->last_picture.f->data[0];
+    int ls = FFMIN(av_image_get_linesize(p->format, s->width, 0), s->width * s->bpp);
 
     if (s->blend_op == APNG_BLEND_OP_OVER &&
-        avctx->pix_fmt != AV_PIX_FMT_RGBA &&
-        avctx->pix_fmt != AV_PIX_FMT_GRAY8A &&
-        avctx->pix_fmt != AV_PIX_FMT_PAL8) {
+        avctx->pix_fmt != AV_PIX_FMT_RGBA && avctx->pix_fmt != AV_PIX_FMT_ARGB) {
         avpriv_request_sample(avctx, "Blending with pixel format %s",
                               av_get_pix_fmt_name(avctx->pix_fmt));
         return AVERROR_PATCHWELCOME;
     }
 
-    buffer = av_malloc_array(s->image_linesize, s->height);
-    if (!buffer)
-        return AVERROR(ENOMEM);
-
-
-    // Do the disposal operation specified by the last frame on the frame
-    if (s->last_dispose_op != APNG_DISPOSE_OP_PREVIOUS) {
-        ff_thread_await_progress(&s->last_picture, INT_MAX, 0);
-        memcpy(buffer, s->last_picture.f->data[0], s->image_linesize * s->height);
-
-        if (s->last_dispose_op == APNG_DISPOSE_OP_BACKGROUND)
-            for (y = s->last_y_offset; y < s->last_y_offset + s->last_h; ++y)
-                memset(buffer + s->image_linesize * y + s->bpp * s->last_x_offset, 0, s->bpp * s->last_w);
-
-        memcpy(s->previous_picture.f->data[0], buffer, s->image_linesize * s->height);
-        ff_thread_report_progress(&s->previous_picture, INT_MAX, 0);
-    } else {
+    ff_thread_await_progress(&s->last_picture, INT_MAX, 0);
+    if (s->dispose_op == APNG_DISPOSE_OP_PREVIOUS)
         ff_thread_await_progress(&s->previous_picture, INT_MAX, 0);
-        memcpy(buffer, s->previous_picture.f->data[0], s->image_linesize * s->height);
+
+    for (j = 0; j < s->y_offset; j++) {
+        for (i = 0; i < ls; i++)
+            pd[i] = pd_last[i];
+        pd      += s->image_linesize;
+        pd_last += s->image_linesize;
     }
 
-    // Perform blending
-    if (s->blend_op == APNG_BLEND_OP_SOURCE) {
-        for (y = s->y_offset; y < s->y_offset + s->cur_h; ++y) {
-            size_t row_start = s->image_linesize * y + s->bpp * s->x_offset;
-            memcpy(buffer + row_start, p->data[0] + row_start, s->bpp * s->cur_w);
+    if (s->dispose_op != APNG_DISPOSE_OP_BACKGROUND && s->blend_op == APNG_BLEND_OP_OVER) {
+        uint8_t ri, gi, bi, ai;
+
+        pd_last_region += s->y_offset * s->image_linesize;
+        if (avctx->pix_fmt == AV_PIX_FMT_RGBA) {
+            ri = 0;
+            gi = 1;
+            bi = 2;
+            ai = 3;
+        } else {
+            ri = 3;
+            gi = 2;
+            bi = 1;
+            ai = 0;
         }
-    } else { // APNG_BLEND_OP_OVER
-        for (y = s->y_offset; y < s->y_offset + s->cur_h; ++y) {
-            uint8_t *foreground = p->data[0] + s->image_linesize * y + s->bpp * s->x_offset;
-            uint8_t *background = buffer + s->image_linesize * y + s->bpp * s->x_offset;
-            for (x = s->x_offset; x < s->x_offset + s->cur_w; ++x, foreground += s->bpp, background += s->bpp) {
-                size_t b;
-                uint8_t foreground_alpha, background_alpha, output_alpha;
-                uint8_t output[10];
 
-                // Since we might be blending alpha onto alpha, we use the following equations:
-                // output_alpha = foreground_alpha + (1 - foreground_alpha) * background_alpha
-                // output = (foreground_alpha * foreground + (1 - foreground_alpha) * background_alpha * background) / output_alpha
+        for (j = s->y_offset; j < s->y_offset + s->cur_h; j++) {
+            for (i = 0; i < s->x_offset * s->bpp; i++)
+                pd[i] = pd_last[i];
+            for (; i < (s->x_offset + s->cur_w) * s->bpp; i += s->bpp) {
+                uint8_t alpha = pd[i+ai];
 
-                switch (avctx->pix_fmt) {
-                case AV_PIX_FMT_RGBA:
-                    foreground_alpha = foreground[3];
-                    background_alpha = background[3];
+                /* output = alpha * foreground + (1-alpha) * background */
+                switch (alpha) {
+                case 0:
+                    pd[i+ri] = pd_last_region[i+ri];
+                    pd[i+gi] = pd_last_region[i+gi];
+                    pd[i+bi] = pd_last_region[i+bi];
+                    pd[i+ai] = 0xff;
                     break;
-
-                case AV_PIX_FMT_GRAY8A:
-                    foreground_alpha = foreground[1];
-                    background_alpha = background[1];
+                case 255:
                     break;
-
-                case AV_PIX_FMT_PAL8:
-                    foreground_alpha = s->palette[foreground[0]] >> 24;
-                    background_alpha = s->palette[background[0]] >> 24;
+                default:
+                    pd[i+ri] = FAST_DIV255(alpha * pd[i+ri] + (255 - alpha) * pd_last_region[i+ri]);
+                    pd[i+gi] = FAST_DIV255(alpha * pd[i+gi] + (255 - alpha) * pd_last_region[i+gi]);
+                    pd[i+bi] = FAST_DIV255(alpha * pd[i+bi] + (255 - alpha) * pd_last_region[i+bi]);
+                    pd[i+ai] = 0xff;
                     break;
                 }
-
-                if (foreground_alpha == 0)
-                    continue;
-
-                if (foreground_alpha == 255) {
-                    memcpy(background, foreground, s->bpp);
-                    continue;
-                }
-
-                if (avctx->pix_fmt == AV_PIX_FMT_PAL8) {
-                    // TODO: Alpha blending with PAL8 will likely need the entire image converted over to RGBA first
-                    avpriv_request_sample(avctx, "Alpha blending palette samples");
-                    background[0] = foreground[0];
-                    continue;
-                }
-
-                output_alpha = foreground_alpha + FAST_DIV255((255 - foreground_alpha) * background_alpha);
-
-                av_assert0(s->bpp <= 10);
-
-                for (b = 0; b < s->bpp - 1; ++b) {
-                    if (output_alpha == 0) {
-                        output[b] = 0;
-                    } else if (background_alpha == 255) {
-                        output[b] = FAST_DIV255(foreground_alpha * foreground[b] + (255 - foreground_alpha) * background[b]);
-                    } else {
-                        output[b] = (255 * foreground_alpha * foreground[b] + (255 - foreground_alpha) * background_alpha * background[b]) / (255 * output_alpha);
-                    }
-                }
-                output[b] = output_alpha;
-                memcpy(background, output, s->bpp);
             }
+            for (; i < ls; i++)
+                pd[i] = pd_last[i];
+            pd      += s->image_linesize;
+            pd_last += s->image_linesize;
+            pd_last_region += s->image_linesize;
+        }
+    } else {
+        for (j = s->y_offset; j < s->y_offset + s->cur_h; j++) {
+            for (i = 0; i < s->x_offset * s->bpp; i++)
+                pd[i] = pd_last[i];
+            for (i = (s->x_offset + s->cur_w) * s->bpp; i < ls; i++)
+                pd[i] = pd_last[i];
+            pd      += s->image_linesize;
+            pd_last += s->image_linesize;
         }
     }
 
-    // Copy blended buffer into the frame and free
-    memcpy(p->data[0], buffer, s->image_linesize * s->height);
-    av_free(buffer);
+    for (j = s->y_offset + s->cur_h; j < s->height; j++) {
+        for (i = 0; i < ls; i++)
+            pd[i] = pd_last[i];
+        pd      += s->image_linesize;
+        pd_last += s->image_linesize;
+    }
 
     return 0;
 }
@@ -1090,17 +982,11 @@ static int decode_frame_common(AVCodecContext *avctx, PNGDecContext *s,
     uint32_t tag, length;
     int decode_next_dat = 0;
     int ret;
+    AVFrame *ref;
 
     for (;;) {
         length = bytestream2_get_bytes_left(&s->gb);
         if (length <= 0) {
-
-            if (avctx->codec_id == AV_CODEC_ID_PNG &&
-                avctx->skip_frame == AVDISCARD_ALL) {
-                av_frame_set_metadata(p, metadata);
-                return 0;
-            }
-
             if (CONFIG_APNG_DECODER && avctx->codec_id == AV_CODEC_ID_APNG && length == 0) {
                 if (!(s->state & PNG_IDAT))
                     return 0;
@@ -1128,20 +1014,6 @@ static int decode_frame_common(AVCodecContext *avctx, PNGDecContext *s,
                 ((tag >> 8) & 0xff),
                 ((tag >> 16) & 0xff),
                 ((tag >> 24) & 0xff), length);
-
-        if (avctx->codec_id == AV_CODEC_ID_PNG &&
-            avctx->skip_frame == AVDISCARD_ALL) {
-            switch(tag) {
-            case MKTAG('I', 'H', 'D', 'R'):
-            case MKTAG('p', 'H', 'Y', 's'):
-            case MKTAG('t', 'E', 'X', 't'):
-            case MKTAG('I', 'D', 'A', 'T'):
-                break;
-            default:
-                goto skip_tag;
-            }
-        }
-
         switch (tag) {
         case MKTAG('I', 'H', 'D', 'R'):
             if ((ret = decode_ihdr_chunk(avctx, s, length)) < 0)
@@ -1192,22 +1064,6 @@ static int decode_frame_common(AVCodecContext *avctx, PNGDecContext *s,
                 av_log(avctx, AV_LOG_WARNING, "Broken zTXt chunk\n");
             bytestream2_skip(&s->gb, length + 4);
             break;
-        case MKTAG('s', 'T', 'E', 'R'): {
-            int mode = bytestream2_get_byte(&s->gb);
-            AVStereo3D *stereo3d = av_stereo3d_create_side_data(p);
-            if (!stereo3d)
-                goto fail;
-
-            if (mode == 0 || mode == 1) {
-                stereo3d->type  = AV_STEREO3D_SIDEBYSIDE;
-                stereo3d->flags = mode ? 0 : AV_STEREO3D_FLAG_INVERT;
-            } else {
-                 av_log(avctx, AV_LOG_WARNING,
-                        "Unknown value in sTER chunk (%d)\n", mode);
-            }
-            bytestream2_skip(&s->gb, 4); /* crc */
-            break;
-        }
         case MKTAG('I', 'E', 'N', 'D'):
             if (!(s->state & PNG_ALLIMAGE))
                 av_log(avctx, AV_LOG_ERROR, "IEND without all image\n");
@@ -1225,44 +1081,18 @@ skip_tag:
         }
     }
 exit_loop:
-    if (avctx->codec_id == AV_CODEC_ID_PNG &&
-        avctx->skip_frame == AVDISCARD_ALL) {
-        av_frame_set_metadata(p, metadata);
-        return 0;
-    }
 
     if (s->bits_per_pixel <= 4)
         handle_small_bpp(s, p);
 
-    /* apply transparency if needed */
-    if (s->has_trns && s->color_type != PNG_COLOR_TYPE_PALETTE) {
-        size_t byte_depth = s->bit_depth > 8 ? 2 : 1;
-        size_t raw_bpp = s->bpp - byte_depth;
-        unsigned x, y;
-
-        for (y = 0; y < s->height; ++y) {
-            uint8_t *row = &s->image_buf[s->image_linesize * y];
-
-            /* since we're updating in-place, we have to go from right to left */
-            for (x = s->width; x > 0; --x) {
-                uint8_t *pixel = &row[s->bpp * (x - 1)];
-                memmove(pixel, &row[raw_bpp * (x - 1)], raw_bpp);
-
-                if (!memcmp(pixel, s->transparent_color_be, raw_bpp)) {
-                    memset(&pixel[raw_bpp], 0, byte_depth);
-                } else {
-                    memset(&pixel[raw_bpp], 0xff, byte_depth);
-                }
-            }
-        }
-    }
-
     /* handle p-frames only if a predecessor frame is available */
-    if (s->last_picture.f->data[0]) {
+    ref = s->dispose_op == APNG_DISPOSE_OP_PREVIOUS ?
+             s->previous_picture.f : s->last_picture.f;
+    if (ref->data[0] && s->last_picture.f->data[0]) {
         if (   !(avpkt->flags & AV_PKT_FLAG_KEY) && avctx->codec_tag != AV_RL32("MPNG")
-            && s->last_picture.f->width == p->width
-            && s->last_picture.f->height== p->height
-            && s->last_picture.f->format== p->format
+            && ref->width == p->width
+            && ref->height== p->height
+            && ref->format== p->format
          ) {
             if (CONFIG_PNG_DECODER && avctx->codec_id != AV_CODEC_ID_APNG)
                 handle_p_frame_png(s, p);
@@ -1273,7 +1103,6 @@ exit_loop:
         }
     }
     ff_thread_report_progress(&s->picture, INT_MAX, 0);
-    ff_thread_report_progress(&s->previous_picture, INT_MAX, 0);
 
     av_frame_set_metadata(p, metadata);
     metadata   = NULL;
@@ -1282,7 +1111,6 @@ exit_loop:
 fail:
     av_dict_free(&metadata);
     ff_thread_report_progress(&s->picture, INT_MAX, 0);
-    ff_thread_report_progress(&s->previous_picture, INT_MAX, 0);
     return ret;
 }
 
@@ -1308,11 +1136,11 @@ static int decode_frame_png(AVCodecContext *avctx,
     sig = bytestream2_get_be64(&s->gb);
     if (sig != PNGSIG &&
         sig != MNGSIG) {
-        av_log(avctx, AV_LOG_ERROR, "Invalid PNG signature 0x%08"PRIX64".\n", sig);
+        av_log(avctx, AV_LOG_ERROR, "Missing png signature\n");
         return AVERROR_INVALIDDATA;
     }
 
-    s->y = s->state = s->has_trns = 0;
+    s->y = s->state = 0;
 
     /* init the zlib */
     s->zstream.zalloc = ff_png_zalloc;
@@ -1326,12 +1154,6 @@ static int decode_frame_png(AVCodecContext *avctx,
 
     if ((ret = decode_frame_common(avctx, s, p, avpkt)) < 0)
         goto the_end;
-
-    if (avctx->skip_frame == AVDISCARD_ALL) {
-        *got_frame = 0;
-        ret = bytestream2_tell(&s->gb);
-        goto the_end;
-    }
 
     if ((ret = av_frame_ref(data, s->picture.f)) < 0)
         return ret;
@@ -1354,9 +1176,13 @@ static int decode_frame_apng(AVCodecContext *avctx,
     PNGDecContext *const s = avctx->priv_data;
     int ret;
     AVFrame *p;
+    ThreadFrame tmp;
 
-    ff_thread_release_buffer(avctx, &s->last_picture);
-    FFSWAP(ThreadFrame, s->picture, s->last_picture);
+    ff_thread_release_buffer(avctx, &s->previous_picture);
+    tmp = s->previous_picture;
+    s->previous_picture = s->last_picture;
+    s->last_picture = s->picture;
+    s->picture = tmp;
     p = s->picture.f;
 
     if (!(s->state & PNG_IHDR)) {
@@ -1402,7 +1228,6 @@ end:
 }
 #endif
 
-#if HAVE_THREADS
 static int update_thread_context(AVCodecContext *dst, const AVCodecContext *src)
 {
     PNGDecContext *psrc = src->priv_data;
@@ -1412,51 +1237,24 @@ static int update_thread_context(AVCodecContext *dst, const AVCodecContext *src)
     if (dst == src)
         return 0;
 
+    pdst->frame_id = psrc->frame_id;
+
     ff_thread_release_buffer(dst, &pdst->picture);
     if (psrc->picture.f->data[0] &&
         (ret = ff_thread_ref_frame(&pdst->picture, &psrc->picture)) < 0)
         return ret;
     if (CONFIG_APNG_DECODER && dst->codec_id == AV_CODEC_ID_APNG) {
-        pdst->width             = psrc->width;
-        pdst->height            = psrc->height;
-        pdst->bit_depth         = psrc->bit_depth;
-        pdst->color_type        = psrc->color_type;
-        pdst->compression_type  = psrc->compression_type;
-        pdst->interlace_type    = psrc->interlace_type;
-        pdst->filter_type       = psrc->filter_type;
-        pdst->cur_w = psrc->cur_w;
-        pdst->cur_h = psrc->cur_h;
-        pdst->x_offset = psrc->x_offset;
-        pdst->y_offset = psrc->y_offset;
-        pdst->has_trns = psrc->has_trns;
-        memcpy(pdst->transparent_color_be, psrc->transparent_color_be, sizeof(pdst->transparent_color_be));
-
-        pdst->dispose_op = psrc->dispose_op;
-
-        memcpy(pdst->palette, psrc->palette, sizeof(pdst->palette));
-
-        pdst->state |= psrc->state & (PNG_IHDR | PNG_PLTE);
-
         ff_thread_release_buffer(dst, &pdst->last_picture);
-        if (psrc->last_picture.f->data[0] &&
-            (ret = ff_thread_ref_frame(&pdst->last_picture, &psrc->last_picture)) < 0)
-            return ret;
-
-        ff_thread_release_buffer(dst, &pdst->previous_picture);
-        if (psrc->previous_picture.f->data[0] &&
-            (ret = ff_thread_ref_frame(&pdst->previous_picture, &psrc->previous_picture)) < 0)
-            return ret;
+        if (psrc->last_picture.f->data[0])
+            return ff_thread_ref_frame(&pdst->last_picture, &psrc->last_picture);
     }
 
     return 0;
 }
-#endif
 
 static av_cold int png_dec_init(AVCodecContext *avctx)
 {
     PNGDecContext *s = avctx->priv_data;
-
-    avctx->color_range = AVCOL_RANGE_JPEG;
 
     s->avctx = avctx;
     s->previous_picture.f = av_frame_alloc();
@@ -1509,7 +1307,7 @@ AVCodec ff_apng_decoder = {
     .decode         = decode_frame_apng,
     .init_thread_copy = ONLY_IF_THREADS_ENABLED(png_dec_init),
     .update_thread_context = ONLY_IF_THREADS_ENABLED(update_thread_context),
-    .capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS /*| AV_CODEC_CAP_DRAW_HORIZ_BAND*/,
+    .capabilities   = CODEC_CAP_DR1 | CODEC_CAP_FRAME_THREADS /*| CODEC_CAP_DRAW_HORIZ_BAND*/,
 };
 #endif
 
@@ -1525,7 +1323,6 @@ AVCodec ff_png_decoder = {
     .decode         = decode_frame_png,
     .init_thread_copy = ONLY_IF_THREADS_ENABLED(png_dec_init),
     .update_thread_context = ONLY_IF_THREADS_ENABLED(update_thread_context),
-    .capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS /*| AV_CODEC_CAP_DRAW_HORIZ_BAND*/,
-    .caps_internal  = FF_CODEC_CAP_SKIP_FRAME_FILL_PARAM,
+    .capabilities   = CODEC_CAP_DR1 | CODEC_CAP_FRAME_THREADS /*| CODEC_CAP_DRAW_HORIZ_BAND*/,
 };
 #endif

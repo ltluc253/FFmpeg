@@ -89,7 +89,6 @@
 #include <inttypes.h>
 
 #include "libavutil/float_dsp.h"
-#include "libavutil/internal.h"
 #include "libavutil/intfloat.h"
 #include "libavutil/intreadwrite.h"
 #include "avcodec.h"
@@ -133,7 +132,7 @@ static float            sin64[33];        ///< sine table for decorrelation
 /**
  * @brief frame specific decoder context for a single channel
  */
-typedef struct WMAProChannelCtx {
+typedef struct {
     int16_t  prev_block_len;                          ///< length of the previous block
     uint8_t  transmit_coefs;
     uint8_t  num_subframes;
@@ -158,7 +157,7 @@ typedef struct WMAProChannelCtx {
 /**
  * @brief channel group for channel transformations
  */
-typedef struct WMAProChannelGrp {
+typedef struct {
     uint8_t num_channels;                                     ///< number of channels in the group
     int8_t  transform;                                        ///< transform on / off
     int8_t  transform_band[MAX_BANDS];                        ///< controls if the transform is enabled for a certain band
@@ -174,7 +173,7 @@ typedef struct WMAProDecodeCtx {
     AVCodecContext*  avctx;                         ///< codec context for av_log
     AVFloatDSPContext *fdsp;
     uint8_t          frame_data[MAX_FRAMESIZE +
-                      AV_INPUT_BUFFER_PADDING_SIZE];///< compressed frame data
+                      FF_INPUT_BUFFER_PADDING_SIZE];///< compressed frame data
     PutBitContext    pb;                            ///< context for filling the frame_data buffer
     FFTContext       mdct_ctx[WMAPRO_BLOCK_SIZES];  ///< MDCT context per block size
     DECLARE_ALIGNED(32, float, tmp)[WMAPRO_BLOCK_MAX_SIZE]; ///< IMDCT output buffer
@@ -207,11 +206,9 @@ typedef struct WMAProDecodeCtx {
     int              subframe_offset;               ///< subframe offset in the bit reservoir
     uint8_t          packet_loss;                   ///< set in case of bitstream error
     uint8_t          packet_done;                   ///< set when a packet is fully decoded
-    uint8_t          skip_packets;
 
     /* frame decode state */
     uint32_t         frame_num;                     ///< current frame number (not used for decoding)
-    int              num_frames;
     GetBitContext    gb;                            ///< bitstream reader context
     int              buf_bit_size;                  ///< buffer size in bits
     uint8_t          drc_gain;                      ///< gain for the DRC tool
@@ -271,21 +268,6 @@ static av_cold int decode_end(AVCodecContext *avctx)
     return 0;
 }
 
-static av_cold int get_rate(AVCodecContext *avctx)
-{
-    if (avctx->codec_id != AV_CODEC_ID_WMAPRO) { // XXX: is this really only for XMA?
-        if (avctx->sample_rate > 44100)
-            return 48000;
-        else if (avctx->sample_rate > 32000)
-            return 44100;
-        else if (avctx->sample_rate > 24000)
-            return 32000;
-        return 24000;
-    }
-
-    return avctx->sample_rate;
-}
-
 /**
  *@brief Initialize the decoder.
  *@param avctx codec context
@@ -300,16 +282,13 @@ static av_cold int decode_init(AVCodecContext *avctx)
     int log2_max_num_subframes;
     int num_possible_block_sizes;
 
-    if (avctx->codec_id == AV_CODEC_ID_XMA1 || avctx->codec_id == AV_CODEC_ID_XMA2)
-        avctx->block_align = 2048;
-
     if (!avctx->block_align) {
         av_log(avctx, AV_LOG_ERROR, "block_align is not set\n");
         return AVERROR(EINVAL);
     }
 
     s->avctx = avctx;
-    s->fdsp = avpriv_float_dsp_alloc(avctx->flags & AV_CODEC_FLAG_BITEXACT);
+    s->fdsp = avpriv_float_dsp_alloc(avctx->flags & CODEC_FLAG_BITEXACT);
     if (!s->fdsp)
         return AVERROR(ENOMEM);
 
@@ -317,25 +296,7 @@ static av_cold int decode_init(AVCodecContext *avctx)
 
     avctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
 
-    if (avctx->codec_id == AV_CODEC_ID_XMA2 && avctx->extradata_size >= 34) {
-        s->decode_flags    = 0x10d6;
-        channel_mask       = AV_RL32(edata_ptr+2);
-        s->bits_per_sample = 16;
-        /** dump the extradata */
-        for (i = 0; i < avctx->extradata_size; i++)
-            ff_dlog(avctx, "[%x] ", avctx->extradata[i]);
-        ff_dlog(avctx, "\n");
-
-     } else if (avctx->codec_id == AV_CODEC_ID_XMA1 && avctx->extradata_size >= 28) {
-        s->decode_flags    = 0x10d6;
-        s->bits_per_sample = 16;
-        channel_mask       = 0;
-        /** dump the extradata */
-        for (i = 0; i < avctx->extradata_size; i++)
-            ff_dlog(avctx, "[%x] ", avctx->extradata[i]);
-        ff_dlog(avctx, "\n");
-
-     } else if (avctx->extradata_size >= 18) {
+    if (avctx->extradata_size >= 18) {
         s->decode_flags    = AV_RL16(edata_ptr+14);
         channel_mask       = AV_RL32(edata_ptr+2);
         s->bits_per_sample = AV_RL16(edata_ptr);
@@ -347,16 +308,11 @@ static av_cold int decode_init(AVCodecContext *avctx)
 
         /** dump the extradata */
         for (i = 0; i < avctx->extradata_size; i++)
-            ff_dlog(avctx, "[%x] ", avctx->extradata[i]);
-        ff_dlog(avctx, "\n");
+            av_dlog(avctx, "[%x] ", avctx->extradata[i]);
+        av_dlog(avctx, "\n");
 
     } else {
         avpriv_request_sample(avctx, "Unknown extradata size");
-        return AVERROR_PATCHWELCOME;
-    }
-
-    if (avctx->codec_id != AV_CODEC_ID_WMAPRO && avctx->channels > 2) {
-        avpriv_report_missing_feature(avctx, ">2 channels support");
         return AVERROR_PATCHWELCOME;
     }
 
@@ -368,25 +324,17 @@ static av_cold int decode_init(AVCodecContext *avctx)
     }
 
     /** frame info */
-    if (avctx->codec_id != AV_CODEC_ID_WMAPRO)
-        s->skip_frame = 0;
-    else
-        s->skip_frame = 1; /* skip first frame */
-
+    s->skip_frame  = 1; /* skip first frame */
     s->packet_loss = 1;
     s->len_prefix  = (s->decode_flags & 0x40);
 
     /** get frame len */
-    if (avctx->codec_id == AV_CODEC_ID_WMAPRO) {
-        bits = ff_wma_get_frame_len_bits(avctx->sample_rate, 3, s->decode_flags);
-        if (bits > WMAPRO_BLOCK_MAX_BITS) {
-            avpriv_request_sample(avctx, "14-bit block sizes");
-            return AVERROR_PATCHWELCOME;
-        }
-        s->samples_per_frame = 1 << bits;
-    } else {
-        s->samples_per_frame = 512;
+    bits = ff_wma_get_frame_len_bits(avctx->sample_rate, 3, s->decode_flags);
+    if (bits > WMAPRO_BLOCK_MAX_BITS) {
+        avpriv_request_sample(avctx, "14-bit block sizes");
+        return AVERROR_PATCHWELCOME;
     }
+    s->samples_per_frame = 1 << bits;
 
     /** subframe info */
     log2_max_num_subframes       = ((s->decode_flags & 0x38) >> 3);
@@ -475,12 +423,12 @@ static av_cold int decode_init(AVCodecContext *avctx)
         int subframe_len = s->samples_per_frame >> i;
         int x;
         int band = 1;
-        int rate = get_rate(avctx);
 
         s->sfb_offsets[i][0] = 0;
 
         for (x = 0; x < MAX_BANDS-1 && s->sfb_offsets[i][band - 1] < subframe_len; x++) {
-            int offset = (subframe_len * 2 * critical_freq[x]) / rate + 2;
+            int offset = (subframe_len * 2 * critical_freq[x])
+                          / s->avctx->sample_rate + 2;
             offset &= ~3;
             if (offset > s->sfb_offsets[i][band - 1])
                 s->sfb_offsets[i][band++] = offset;
@@ -684,7 +632,7 @@ static int decode_tilehdr(WMAProDecodeCtx *s)
         int i;
         int offset = 0;
         for (i = 0; i < s->channel[c].num_subframes; i++) {
-            ff_dlog(s->avctx, "frame[%i] channel[%i] subframe[%i]"
+            av_dlog(s->avctx, "frame[%i] channel[%i] subframe[%i]"
                     " len %i\n", s->frame_num, c, i,
                     s->channel[c].subframe_len[i]);
             s->channel[c].subframe_offset[i] = offset;
@@ -884,7 +832,7 @@ static int decode_coeffs(WMAProDecodeCtx *s, int c)
     const uint16_t* run;
     const float* level;
 
-    ff_dlog(s->avctx, "decode coefficients for channel %i\n", c);
+    av_dlog(s->avctx, "decode coefficients for channel %i\n", c);
 
     vlctable = get_bits1(&s->gb);
     vlc = &coef_vlc[vlctable];
@@ -1169,7 +1117,7 @@ static int decode_subframe(WMAProDecodeCtx *s)
         }
     }
 
-    ff_dlog(s->avctx,
+    av_dlog(s->avctx,
             "processing subframe with offset %i len %i\n", offset, subframe_len);
 
     /** get a list of all channels that contain the estimated block */
@@ -1196,7 +1144,7 @@ static int decode_subframe(WMAProDecodeCtx *s)
         s->parsed_all_subframes = 1;
 
 
-    ff_dlog(s->avctx, "subframe is part of %i channels\n",
+    av_dlog(s->avctx, "subframe is part of %i channels\n",
             s->channels_for_cur_subframe);
 
     /** calculate number of scale factor bands and their offsets */
@@ -1222,7 +1170,7 @@ static int decode_subframe(WMAProDecodeCtx *s)
         int num_fill_bits;
         if (!(num_fill_bits = get_bits(&s->gb, 2))) {
             int len = get_bits(&s->gb, 4);
-            num_fill_bits = get_bitsz(&s->gb, len) + 1;
+            num_fill_bits = (len ? get_bits(&s->gb, len) : 0) + 1;
         }
 
         if (num_fill_bits >= 0) {
@@ -1315,7 +1263,7 @@ static int decode_subframe(WMAProDecodeCtx *s)
             return AVERROR_INVALIDDATA;
     }
 
-    ff_dlog(s->avctx, "BITSTREAM: subframe header length was %i\n",
+    av_dlog(s->avctx, "BITSTREAM: subframe header length was %i\n",
             get_bits_count(&s->gb) - s->subframe_offset);
 
     /** parse coefficients */
@@ -1329,7 +1277,7 @@ static int decode_subframe(WMAProDecodeCtx *s)
                    sizeof(*s->channel[c].coeffs) * subframe_len);
     }
 
-    ff_dlog(s->avctx, "BITSTREAM: subframe length was %i\n",
+    av_dlog(s->avctx, "BITSTREAM: subframe length was %i\n",
             get_bits_count(&s->gb) - s->subframe_offset);
 
     if (transmit_coeffs) {
@@ -1351,7 +1299,7 @@ static int decode_subframe(WMAProDecodeCtx *s)
                 const int exp = s->channel[c].quant_step -
                             (s->channel[c].max_scale_factor - *sf++) *
                             s->channel[c].scale_factor_step;
-                const float quant = ff_exp10(exp / 20.0);
+                const float quant = pow(10.0, exp / 20.0);
                 int start = s->cur_sfb_offsets[b];
                 s->fdsp->vector_fmul_scalar(s->tmp + start,
                                            s->channel[c].coeffs + start,
@@ -1397,7 +1345,7 @@ static int decode_frame(WMAProDecodeCtx *s, AVFrame *frame, int *got_frame_ptr)
     if (s->len_prefix)
         len = get_bits(gb, s->log2_frame_size);
 
-    ff_dlog(s->avctx, "decoding frame with length %x\n", len);
+    av_dlog(s->avctx, "decoding frame with length %x\n", len);
 
     /** decode tile information */
     if (decode_tilehdr(s)) {
@@ -1416,7 +1364,7 @@ static int decode_frame(WMAProDecodeCtx *s, AVFrame *frame, int *got_frame_ptr)
     /** read drc info */
     if (s->dynamic_range_compression) {
         s->drc_gain = get_bits(gb, 8);
-        ff_dlog(s->avctx, "drc_gain %i\n", s->drc_gain);
+        av_dlog(s->avctx, "drc_gain %i\n", s->drc_gain);
     }
 
     /** no idea what these are for, might be the number of samples
@@ -1427,18 +1375,18 @@ static int decode_frame(WMAProDecodeCtx *s, AVFrame *frame, int *got_frame_ptr)
         /** usually true for the first frame */
         if (get_bits1(gb)) {
             skip = get_bits(gb, av_log2(s->samples_per_frame * 2));
-            ff_dlog(s->avctx, "start skip: %i\n", skip);
+            av_dlog(s->avctx, "start skip: %i\n", skip);
         }
 
         /** sometimes true for the last frame */
         if (get_bits1(gb)) {
             skip = get_bits(gb, av_log2(s->samples_per_frame * 2));
-            ff_dlog(s->avctx, "end skip: %i\n", skip);
+            av_dlog(s->avctx, "end skip: %i\n", skip);
         }
 
     }
 
-    ff_dlog(s->avctx, "BITSTREAM: frame header length was %i\n",
+    av_dlog(s->avctx, "BITSTREAM: frame header length was %i\n",
             get_bits_count(gb) - s->frame_offset);
 
     /** reset subframe states */
@@ -1593,52 +1541,32 @@ static int decode_packet(AVCodecContext *avctx, void *data,
 
     *got_frame_ptr = 0;
 
-    if (s->skip_packets > 0) {
-        s->skip_packets--;
-        return FFMIN(avpkt->size, avctx->block_align);
-    }
-
     if (s->packet_done || s->packet_loss) {
         s->packet_done = 0;
 
         /** sanity check for the buffer length */
-        if (avctx->codec_id == AV_CODEC_ID_WMAPRO && buf_size < avctx->block_align) {
+        if (buf_size < avctx->block_align) {
             av_log(avctx, AV_LOG_ERROR, "Input packet too small (%d < %d)\n",
                    buf_size, avctx->block_align);
             return AVERROR_INVALIDDATA;
         }
 
-        if (avctx->codec_id == AV_CODEC_ID_WMAPRO) {
-            s->next_packet_start = buf_size - avctx->block_align;
-            buf_size = avctx->block_align;
-        } else {
-            s->next_packet_start = buf_size - FFMIN(buf_size, avctx->block_align);
-            buf_size = FFMIN(buf_size, avctx->block_align);
-        }
+        s->next_packet_start = buf_size - avctx->block_align;
+        buf_size = avctx->block_align;
         s->buf_bit_size = buf_size << 3;
 
         /** parse packet header */
         init_get_bits(gb, buf, s->buf_bit_size);
-        if (avctx->codec_id != AV_CODEC_ID_XMA2) {
-            packet_sequence_number = get_bits(gb, 4);
-            skip_bits(gb, 2);
-        } else {
-            s->num_frames = get_bits(gb, 6);
-            packet_sequence_number = 0;
-        }
+        packet_sequence_number = get_bits(gb, 4);
+        skip_bits(gb, 2);
 
         /** get number of bits that need to be added to the previous frame */
         num_bits_prev_frame = get_bits(gb, s->log2_frame_size);
-        if (avctx->codec_id != AV_CODEC_ID_WMAPRO) {
-            skip_bits(gb, 3);
-            s->skip_packets = get_bits(gb, 8);
-        }
-
-        ff_dlog(avctx, "packet[%d]: nbpf %x\n", avctx->frame_number,
+        av_dlog(avctx, "packet[%d]: nbpf %x\n", avctx->frame_number,
                 num_bits_prev_frame);
 
         /** check for packet loss */
-        if (avctx->codec_id != AV_CODEC_ID_XMA2 && !s->packet_loss &&
+        if (!s->packet_loss &&
             ((s->packet_sequence_number + 1) & 0xF) != packet_sequence_number) {
             s->packet_loss = 1;
             av_log(avctx, AV_LOG_ERROR,
@@ -1657,14 +1585,14 @@ static int decode_packet(AVCodecContext *avctx, void *data,
             /** append the previous frame data to the remaining data from the
                 previous packet to create a full frame */
             save_bits(s, gb, num_bits_prev_frame, 1);
-            ff_dlog(avctx, "accumulated %x bits of frame data\n",
+            av_dlog(avctx, "accumulated %x bits of frame data\n",
                     s->num_saved_bits - s->frame_offset);
 
             /** decode the cross packet frame if it is valid */
             if (!s->packet_loss)
                 decode_frame(s, data, got_frame_ptr);
         } else if (s->num_saved_bits - s->frame_offset) {
-            ff_dlog(avctx, "ignoring %x previously saved bits\n",
+            av_dlog(avctx, "ignoring %x previously saved bits\n",
                     s->num_saved_bits - s->frame_offset);
         }
 
@@ -1749,37 +1677,7 @@ AVCodec ff_wmapro_decoder = {
     .init           = decode_init,
     .close          = decode_end,
     .decode         = decode_packet,
-    .capabilities   = AV_CODEC_CAP_SUBFRAMES | AV_CODEC_CAP_DR1,
-    .flush          = flush,
-    .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLTP,
-                                                      AV_SAMPLE_FMT_NONE },
-};
-
-AVCodec ff_xma1_decoder = {
-    .name           = "xma1",
-    .long_name      = NULL_IF_CONFIG_SMALL("Xbox Media Audio 1"),
-    .type           = AVMEDIA_TYPE_AUDIO,
-    .id             = AV_CODEC_ID_XMA1,
-    .priv_data_size = sizeof(WMAProDecodeCtx),
-    .init           = decode_init,
-    .close          = decode_end,
-    .decode         = decode_packet,
-    .capabilities   = AV_CODEC_CAP_SUBFRAMES | AV_CODEC_CAP_DR1,
-    .flush          = flush,
-    .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLTP,
-                                                      AV_SAMPLE_FMT_NONE },
-};
-
-AVCodec ff_xma2_decoder = {
-    .name           = "xma2",
-    .long_name      = NULL_IF_CONFIG_SMALL("Xbox Media Audio 2"),
-    .type           = AVMEDIA_TYPE_AUDIO,
-    .id             = AV_CODEC_ID_XMA2,
-    .priv_data_size = sizeof(WMAProDecodeCtx),
-    .init           = decode_init,
-    .close          = decode_end,
-    .decode         = decode_packet,
-    .capabilities   = AV_CODEC_CAP_SUBFRAMES | AV_CODEC_CAP_DR1,
+    .capabilities   = CODEC_CAP_SUBFRAMES | CODEC_CAP_DR1,
     .flush          = flush,
     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLTP,
                                                       AV_SAMPLE_FMT_NONE },

@@ -32,6 +32,7 @@
 #include "cavs.h"
 #include "internal.h"
 #include "mpeg12data.h"
+#include "mpegvideo.h"
 
 static const uint8_t mv_scan[4] = {
     MV_FWD_X0, MV_FWD_X1,
@@ -1143,12 +1144,6 @@ static int decode_seq_header(AVSContext *h)
     skip_bits(&h->gb, 3); //sample_precision
     h->aspect_ratio = get_bits(&h->gb, 4);
     frame_rate_code = get_bits(&h->gb, 4);
-    if (frame_rate_code == 0 || frame_rate_code > 13) {
-        av_log(h->avctx, AV_LOG_WARNING,
-               "frame_rate_code %d is invalid\n", frame_rate_code);
-        frame_rate_code = 1;
-    }
-
     skip_bits(&h->gb, 18); //bit_rate_lower
     skip_bits1(&h->gb);    //marker_bit
     skip_bits(&h->gb, 12); //bit_rate_upper
@@ -1164,7 +1159,7 @@ static int decode_seq_header(AVSContext *h)
     h->mb_height = (h->height + 15) >> 4;
     h->avctx->framerate = ff_mpeg12_frame_rate_tab[frame_rate_code];
     if (!h->top_qp)
-        return ff_cavs_init_top_lines(h);
+        ff_cavs_init_top_lines(h);
     return 0;
 }
 
@@ -1261,6 +1256,6 @@ AVCodec ff_cavs_decoder = {
     .init           = ff_cavs_init,
     .close          = ff_cavs_end,
     .decode         = cavs_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_DELAY,
+    .capabilities   = CODEC_CAP_DR1 | CODEC_CAP_DELAY,
     .flush          = cavs_flush,
 };
