@@ -16,7 +16,7 @@ CONFIGURE_FLAGS="--enable-cross-compile --disable-programs \
                  --disable-doc --disable-ffmpeg --disable-ffplay --disable-ffprobe --disable-ffserver --enable-avresample \
                  --disable-armv6 --disable-armv6t2 \
                  --disable-iconv --disable-bzlib \
-                 	--enable-version3 --enable-gpl \
+                 	--enable-version3 \
                  	--enable-pthreads --disable-small \
                  	--enable-vda --enable-vdpau --enable-asm \
                  	--enable-pic --enable-hwaccels \
